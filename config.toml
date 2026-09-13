@@ -1,0 +1,172 @@
+# Voice Vibe configuration. Edit and restart the app.
+
+[hotkeys]
+# Tap to start recording, tap again to stop -> text is inserted at your cursor.
+dictate = "f9"
+# Hold-to-talk variant of the same action. Leave empty to disable.
+dictate_hold = ""
+# Hands-free session. Tap once to open the mic and leave it open: every time you
+# pause, that sentence is transcribed and inserted, then it keeps listening.
+# Tap again to close the session. See [continuous] below.
+session = "f10"
+# Tap to start, tap again to stop -> the text is spoken aloud instead of typed.
+# Needs the optional TTS extra: uv pip install -e ".[tts]"
+speak = "shift+f9"
+# Hold-to-talk variant of speak. Leave empty to disable.
+speak_hold = ""
+# Tap to quit the app.
+quit = "ctrl+shift+f12"
+
+[model]
+# tiny | base | small | medium | large-v3 | large-v3-turbo | distil-large-v3
+# large-v3-turbo is the sweet spot on an 8 GB GPU.
+name = "large-v3-turbo"
+# auto | cuda | cpu
+device = "auto"
+# auto | float16 | int8_float16 | int8
+compute_type = "auto"
+# ISO-639-1 code, or "auto" to detect every time (slower, less reliable).
+language = "en"
+beam_size = 1
+# Silero VAD trims silence before transcription. Big accuracy win for short clips.
+vad_filter = true
+# Bias the decoder toward your vocabulary. Keep it short.
+initial_prompt = ""
+
+[audio]
+sample_rate = 16000
+# Empty uses the system default microphone. Run with --list-devices to see indices.
+input_device = ""
+# Ignore recordings shorter than this (accidental hotkey taps), in seconds.
+min_duration = 0.25
+# Hard cap on a single recording, in seconds.
+max_duration = 300.0
+
+[output]
+# paste = clipboard + Ctrl+V (fast, handles unicode). type = simulate keystrokes.
+mode = "paste"
+# Restore whatever was on the clipboard before pasting.
+restore_clipboard = true
+# Seconds between keystrokes in "type" mode.
+type_delay = 0.004
+add_trailing_space = true
+strip_trailing_period = false
+lowercase = false
+# Honour the [[commands]] table below.
+voice_commands = true
+# Pause between pasting the text and pressing the command key, in seconds.
+# Raise it if a chat box submits before your text lands.
+command_delay = 0.12
+
+# Hands-free session mode, used by the `session` hotkey (F10).
+[continuous]
+# How long a pause ends a sentence and flushes it, in seconds.
+# Lower = snappier but risks cutting you off mid-thought. 3.0 is very deliberate.
+silence_duration = 1.5
+# Speech must exceed this multiple of the measured room noise. Raise it in a
+# noisy room, lower it if quiet speech gets missed.
+speech_ratio = 4.0
+# Absolute noise gate, so a silent room never trips the detector on its own.
+min_rms = 0.006
+# Drop segments shorter than this, in seconds. Filters coughs and key clicks.
+# Measured on voiced audio only. Keep it low enough that a bare wake word counts.
+min_segment = 0.3
+# Flush anyway if you talk this long without pausing, in seconds.
+max_segment = 60.0
+# Audio retained from just before speech starts, so the first syllable survives.
+pre_roll = 0.35
+
+# Wake word for session mode. With this on, an open session types nothing until
+# it hears one of `phrases`. After a submit command fires it goes back to waiting,
+# so the session can stay open all day.
+[wake]
+enabled = true
+# Any of these wakes it.
+#
+# Choosing one: Whisper uses surrounding context to decide what it heard, so a
+# short uncommon word spoken alone is the least reliable thing you can pick
+# ("arise" comes back as "a rise", "arrives", "Iris"). Two common words are far
+# more robust, and a pairing you would never say by accident avoids false wakes.
+# Verify any candidate with:  run.bat --wake-test --wake "your phrase"
+#
+# Known-good options: "hey computer", "okay computer", "hey jarvis",
+# "computer listen", "start dictation", "wake up".
+phrases = ["hey computer", "okay computer", "ok computer"]
+# Near-miss tolerance, 0 to 1. Absorbs Whisper splitting a word ("a rise") or
+# swapping letters ("arize"). 0 disables. Above ~0.9 is effectively exact;
+# below ~0.7 starts matching unrelated speech.
+fuzzy = 0.82
+# Put the wake phrases in Whisper's initial_prompt so the decoder is primed to
+# emit them verbatim. Cheap and effective; turn off only if it skews dictation.
+bias_prompt = true
+# Abort dictation without submitting anything.
+sleep_phrases = ["never mind", "nevermind", "go to sleep", "cancel that"]
+# Go back to waiting after this many seconds of silence while dictating.
+# Stops a forgotten session from typing out a conversation. 0 disables.
+active_timeout = 20.0
+# Print what was heard while waiting, so you can spot mishearings and add aliases.
+log_ignored = true
+
+# Text-to-speech for the `speak` hotkey, via Soprano (github.com/ekwek1/soprano).
+[speech]
+# auto | cuda | cpu | mps
+device = "auto"
+# auto | transformers | lmdeploy
+backend = "auto"
+# Stream to the speakers as audio is generated. Lower latency.
+streaming = true
+# Higher = more varied delivery. Soprano's default is 0.4.
+temperature = 0.4
+top_p = 0.95
+repetition_penalty = 1.2
+cache_size_mb = 100
+decoder_batch_size = 1
+# Load the model at startup instead of on first use. Costs memory, saves a wait.
+preload = false
+# Directory to keep generated wav files in. Empty = don't save.
+save_dir = ""
+
+[feedback]
+# Short beeps on start / success / error.
+sounds = true
+tray_icon = true
+log_transcripts = true
+
+# Literal find-and-replace applied after transcription, in order.
+# Useful for voice commands and for words Whisper keeps getting wrong.
+[[replacements]]
+find = "new line"
+replace = "\n"
+
+[[replacements]]
+find = "new paragraph"
+replace = "\n\n"
+
+# Trailing voice commands. If a dictation *ends* with one of these phrases, the
+# phrase is removed from the text and the keys are pressed instead. Matching is
+# word-boundary aware, so "enter" submits but "re-enter your password" does not.
+# Say just the phrase on its own to fire the key with no text.
+[[commands]]
+say = "enter"
+keys = "enter"
+
+[[commands]]
+say = "send it"
+keys = "enter"
+
+[[commands]]
+say = "submit"
+keys = "enter"
+
+# Some chat boxes use Ctrl+Enter to send and plain Enter for a newline.
+# [[commands]]
+# say = "send message"
+# keys = "ctrl+enter"
+
+# [[commands]]
+# say = "cancel that"
+# keys = "esc"
+
+# [[commands]]
+# say = "next field"
+# keys = "tab"
