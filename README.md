@@ -12,9 +12,9 @@
 [![Local First](https://img.shields.io/badge/Privacy-Local--first-34C759)](#privacy)
 [![GitHub stars](https://img.shields.io/github/stars/Masqiller/Voice_Vibe?style=flat&logo=github)](https://github.com/Masqiller/Voice_Vibe)
 
-<img src="assets/voice-vibe-demo.gif" alt="Animated Voice Vibe workflow showing F9 dictation, F10 wake-word session, Enter submission, and Shift+F9 speech" width="100%">
+<img src="assets/voice-vibe-demo.gif" alt="Animated Voice Vibe workflow showing dictation, a wake-word session, Enter submission, and speech output" width="100%">
 
-[Quick start](#quick-start) · [How to use](#how-to-use) · [Wake-word mode](#f10--wake-word-session) · [Configuration](#configuration-reference) · [Troubleshooting](#troubleshooting)
+[Quick start](#quick-start) · [How to use](#how-to-use) · [Wake-word mode](#wake-word-session) · [Configuration](#configuration-reference) · [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -24,33 +24,36 @@ Voice Vibe turns your microphone into a system-wide input method. Click any text
 
 It supports three workflows:
 
-- **F9 — one-shot dictation:** tap once to record, tap again to transcribe and paste.
-- **F10 — wake-word session:** leave the session armed, say **“hey computer”**, dictate, then say **“enter”** to paste, submit, and re-arm.
-- **Shift+F9 — speech output:** record speech, transcribe it, and read the result aloud with Soprano TTS.
+- **Ctrl+Alt+Space — one-shot dictation:** tap once to record, tap again to transcribe and paste.
+- **Ctrl+Alt+W — wake-word session:** leave the session armed, say **“hey computer”**, dictate, then say **“enter”** to paste, submit, and re-arm.
+- **Ctrl+Alt+Shift+Space — speech output:** record speech, transcribe it, and read the result aloud with Soprano TTS.
 
 > [!IMPORTANT]
-> F10 must keep the microphone open locally to hear the wake phrase. While armed, background utterances may be segmented and transcribed locally for wake-word detection, but they are **not typed, saved, or sent to a cloud service**.
+> A wake-word session must keep the microphone open locally to hear the wake phrase. While armed, background utterances may be segmented and transcribed locally for wake-word detection, but they are **not typed, saved, or sent to a cloud service**.
 
 ## Why Voice Vibe?
 
-- ⚡ Fast local transcription with `large-v3-turbo` and CTranslate2
+- 🪶 Runs on low-spec laptops: no GPU needed, model picked to match your hardware
 - 🔒 No API key, cloud transcription, account, telemetry, or subscription
 - 🎯 Inserts into the currently focused field instead of a dedicated editor
+- 👻 Runs in the background with no console window — just a floating orb and a tray icon
+- 💬 Replies out loud: confirms what it did, and answers questions about your screen
+- 🚀 Opens your apps by voice, from a strict allowlist
 - 🗣️ Wake phrase, sleep phrase, submit commands, and hands-free sessions
-- 🧠 Exact + safe fuzzy wake matching, with Whisper prompt biasing
-- ⌨️ Configurable global hotkeys and arbitrary key-combination voice commands
+- ⌨️ 20 built-in voice commands (`enter`, `save it`, `undo that`, …), all configurable
 - 📋 Unicode-safe clipboard paste with automatic clipboard restoration
-- 🔊 Optional local Soprano text-to-speech
-- 🎨 Tray states and audible feedback for every mode
+- 📜 Every turn logged as a chat history you can read back
 - 🛠️ Built-in microphone, environment, pipeline, and wake-phrase diagnostics
 ## Contents
 
 - [Quick start](#quick-start)
 - [How to use](#how-to-use)
-- [F9 — one-shot dictation](#f9--one-shot-dictation)
-- [F10 — wake-word session](#f10--wake-word-session)
-- [Shift+F9 — text-to-speech](#shiftf9--text-to-speech)
+- [One-shot dictation](#one-shot-dictation)
+- [Wake-word session](#wake-word-session)
+- [Text-to-speech](#text-to-speech)
 - [Voice commands](#voice-commands)
+- [Replies](#replies)
+- [Chat history](#chat-history)
 - [How it works](#how-it-works)
 - [Configuration reference](#configuration-reference)
 - [Command-line reference](#command-line-reference)
@@ -70,8 +73,10 @@ It supports three workflows:
 | Python | 3.10, 3.11, or 3.12; Python 3.11 is recommended |
 | Package manager | [`uv`](https://docs.astral.sh/uv/) recommended |
 | Microphone | Any Windows input device visible to PortAudio |
-| GPU | Optional NVIDIA GPU; CPU mode is supported |
-| Disk | Model cache plus dependencies; optional TTS adds several GB |
+| CPU | 2 cores minimum; 4+ recommended. **No GPU required.** |
+| RAM | 4 GB works; the model is chosen to fit what you have |
+| GPU | Optional. An NVIDIA card enables the largest model |
+| Disk | ~150 MB (`tiny.en`) to ~1.6 GB (`large-v3-turbo`) of model cache |
 
 ### 1. Clone and enter the repository
 
@@ -88,26 +93,37 @@ uv venv --python 3.11
 
 ### 3. Install
 
-**NVIDIA GPU (recommended):**
-
-```powershell
-uv pip install -e ".[cuda]"
-```
-
-**CPU only:**
+**Standard (works on any machine, no GPU):**
 
 ```powershell
 uv pip install -e .
 ```
 
-**GPU dictation + optional Soprano TTS:**
+**With an NVIDIA GPU:**
 
 ```powershell
-uv pip install -e ".[cuda,tts]"
+uv pip install -e ".[cuda]"
+```
+
+**Optional extras:**
+
+```powershell
+uv pip install -e ".[screen]"   # exact focused-control text + Windows OCR (a few MB)
+uv pip install -e ".[tts]"      # Soprano neural TTS for the speak hotkey (~3 GB, optional)
 ```
 
 > [!NOTE]
-> The first run downloads `large-v3-turbo` from Hugging Face. Once cached, transcription runs locally and startup takes only a few seconds.
+> Neither extra is needed for spoken replies: those use the SAPI voice already
+> built into Windows, which loads instantly and uses no extra memory.
+
+> [!IMPORTANT]
+> By default `[model].name = "auto"`, which picks a model your machine can keep
+> up with — `tiny.en` on a 2-core laptop, `small.en` on 8+ cores, and
+> `large-v3-turbo` only when a GPU is present. A big model that takes eight
+> seconds per sentence is unusable for dictation no matter how accurate it is.
+> Run `.
+un.bat --check` to see what it will choose. The first run downloads
+> that model once; everything after that is local.
 
 ### 4. Verify and launch
 
@@ -116,39 +132,79 @@ uv pip install -e ".[cuda,tts]"
 .\run.bat
 ```
 
-A healthy check reports a microphone, `clipboard ok`, and—when using NVIDIA—a non-zero CUDA device count.
+A healthy check reports a microphone, `clipboard ok`, and the model it will
+use. `cuda none -- CPU mode (supported)` is a normal, fully working result.
+
+`run.bat` starts Voice Vibe **in the background**: no console window appears,
+and closing windows will not stop it. Look for the floating orb in the corner of
+your screen and the tray icon. To watch the log live instead, use
+`.
+un.bat --console`.
 
 ## How to use
 
 | Shortcut | Mode | What it does |
 | --- | --- | --- |
-| `F9` | One-shot dictation | Tap to record, tap again to transcribe and insert |
-| `F10` | Wake-word session | Tap once to arm; say “hey computer” before each request |
-| `Shift+F9` | Speak aloud | Tap to record, tap again to read the transcript via Soprano |
-| `Ctrl+Shift+F12` | Quit | Stops Voice Vibe; Ctrl+C in its console also works |
+| `Ctrl+Alt+Space` | One-shot dictation | Tap to record, tap again to transcribe and insert |
+| `Ctrl+Alt+W` | Wake-word session | Tap once to arm; say “hey computer” before each request |
+| `Ctrl+Alt+Shift+Space` | Speak aloud | Tap to record, tap again to read the transcript via Soprano |
+| `Ctrl+Alt+Shift+Q` | Quit | Stops Voice Vibe; the tray icon menu also works |
 
 Always click the destination field first. Voice Vibe never steals focus: text goes to whichever window owns the keyboard focus when insertion occurs.
 
 ### Status feedback
 
-| State | Tray colour | Meaning |
+Three channels, all showing the same state: the floating orb, the tray icon,
+and short beeps.
+
+| State | Colour | Meaning |
 | --- | --- | --- |
 | Idle | Grey | Ready; no active recording/session |
-| Recording | Red | F9 or Shift+F9 is capturing audio |
-| Armed | Slate | F10 is listening for the wake phrase; nothing is typed |
+| Recording | Red | Dictate or speak is capturing audio |
+| Armed | Slate | A session is listening for the wake phrase; nothing is typed |
 | Dictating | Blue | Wake phrase accepted; speech can be inserted |
 | Transcribing | Amber | Audio is being decoded/processed |
 
+#### The orb
+
+A small circle floats above every other window, including fullscreen apps. It
+is not a window: it has no frame, cannot be moved or focused, and clicks pass
+straight through it. It pulses while listening, and expands to show what was
+just heard or said before shrinking back to a dot.
+
+It is drawn as a Win32 layered window using Pillow, which is already a
+dependency — so it adds no packages and costs a few megabytes of RAM.
+
+Move it, resize it, or switch it off under `[overlay]` in `config.toml`.
+
+#### The Airoot listening overlay
+
+Optionally, the animated Airoot logo with its "Listening" pill appears at the
+bottom centre of the screen whenever the mic is taking in speech — dictate, speak,
+or a session after the wake word — and disappears when it stops. It reacts
+to your voice level.
+
+It is a separate program (`AirootVoiceOverlay.exe`). Voice Vibe starts it hidden
+at launch so it appears instantly, drives it over a localhost UDP port, and
+closes it on exit. It never takes keyboard focus, so dictation still lands in
+your editor. Point `[airoot].exe` at it and set `enabled = true`.
+
+> [!NOTE]
+> It uses about 135 MB of RAM while running, against a few MB for the built-in
+> orb. On a low-memory laptop, leave `[airoot].enabled = false`; the orb shows
+> the same state.
+
 Beeps reinforce the state changes: start, success, error, session open/close, wake, and re-arm each have distinct cues.
-## F9 — one-shot dictation
+
+## One-shot dictation
 
 The simplest workflow:
 
 ```text
 1. Click a text field
-2. Tap F9                 → recording begins
+2. Press Ctrl+Alt+Space   → recording begins
 3. Speak naturally
-4. Tap F9 again           → recording stops
+4. Press it again         → recording stops
 5. Whisper transcribes    → text is pasted at the cursor
 ```
 
@@ -159,14 +215,14 @@ You say:   Refactor the authentication middleware and add tests
 Inserted:  Refactor the authentication middleware and add tests 
 ```
 
-Recordings shorter than `audio.min_duration` are ignored, preventing accidental F9 taps from producing text.
+Recordings shorter than `audio.min_duration` are ignored, preventing accidental hotkey taps from producing text.
 
-## F10 — wake-word session
+## Wake-word session
 
-F10 is designed for hands-free conversations with AI tools.
+The session (Ctrl+Alt+W) is designed for hands-free conversations with AI tools.
 
 ```text
-Tap F10
+Press Ctrl+Alt+W
   └─ ARMED: background speech is ignored
        └─ “Hey computer”
             └─ DICTATING
@@ -174,7 +230,7 @@ Tap F10
                       ├─ inserts “Explain this function”
                       ├─ presses Enter
                       └─ returns to ARMED
-Tap F10 again to close the session
+Press Ctrl+Alt+W again to close the session
 ```
 
 You can wake and dictate in one sentence:
@@ -242,12 +298,12 @@ While dictating, say one of these to abort without submitting:
 
 After `wake.active_timeout` seconds of inactivity, Voice Vibe automatically re-arms. This prevents a forgotten active dictation from typing a later room conversation.
 
-## Shift+F9 — text-to-speech
+## Text-to-speech
 
 With the optional `tts` dependencies installed:
 
 ```text
-Tap Shift+F9 → speak → tap Shift+F9 → Whisper text → Soprano audio
+Press Ctrl+Alt+Shift+Space → speak → press it again → Whisper text → Soprano audio
 ```
 
 Nothing is inserted into the focused field. Soprano reads the transcript through the default speakers.
@@ -276,21 +332,27 @@ A command is recognized only at the **end** of a transcript. The command phrase 
 | `looks good send it` | `looks good` | Enter |
 | `retry enter enter` | `retry` | Enter twice |
 
-Default commands:
+Twenty commands ship enabled in [`config.toml`](config.toml):
 
-```toml
-[[commands]]
-say = "enter"
-keys = "enter"
+| Say | Does | Ends dictation |
+| --- | --- | --- |
+| `enter`, `send it`, `submit` | Enter | yes |
+| `save it` | Ctrl+S | yes |
+| `close tab` | Ctrl+W | yes |
+| `switch window` | Alt+Tab | yes |
+| `never mind that` | Esc | yes |
+| `select all` | Ctrl+A | no |
+| `copy that`, `cut that`, `paste that` | Ctrl+C / X / V | no |
+| `undo that`, `redo that` | Ctrl+Z / Ctrl+Y | no |
+| `find it` | Ctrl+F | no |
+| `next field`, `go back` | Tab / Shift+Tab | no |
+| `scroll down`, `scroll up` | Page Down / Page Up | no |
+| `go to the top`, `go to the end` | Ctrl+Home / Ctrl+End | no |
 
-[[commands]]
-say = "send it"
-keys = "enter"
+`ends_dictation` controls whether firing the command sends a wake-word session
+back to armed. Submitting should; moving to the next field should not.
 
-[[commands]]
-say = "submit"
-keys = "enter"
-```
+Delete or edit any of them, or add your own.
 
 Add arbitrary key combinations:
 
@@ -313,6 +375,68 @@ Supported keys include letters, digits, `enter`, `tab`, `esc`, `space`, `backspa
 
 Matching respects boundaries. `center`, `recenter`, `epicenter`, and `re-enter` do not trigger the `enter` command. “What does the enter key do?” also remains normal text because `enter` is not the final phrase.
 
+## Replies
+
+Voice Vibe answers. Ask it something and it speaks back through the Windows
+voice and shows the answer beside the orb.
+
+| Say | What happens |
+| --- | --- |
+| "open chrome", "launch blender" | Starts the app, says "Opening Chrome." |
+| "what's on my screen" | Reads the window and what it can see in it |
+| "what is this error" | Finds the error line and reads it out |
+| "read this" | Reads your current selection |
+| "where am I" | Names the app you are focused on |
+| "what can you do" | Lists what it handles |
+
+> [!IMPORTANT]
+> **There is no language model here.** Answers are matched and extracted from
+> what is actually on screen — never generated. That makes replies instant, means
+> they cannot be invented, and costs no extra memory, which is what keeps this
+> usable on a cheap laptop. Anything not recognised is treated as ordinary
+> dictation, so nothing you say is ever swallowed.
+
+Turn replies off entirely with `[assistant].enabled = false`.
+
+### Opening apps
+
+Start Menu shortcuts and stock Windows tools are indexed at startup, so most
+apps work with no configuration. Add anything missing — or a shorthand the
+matcher does not guess — under `[[apps]]`.
+
+> [!WARNING]
+> This is the only part of Voice Vibe that turns speech into running a program,
+> so it is deliberately narrow. What you say only ever **selects** an entry from
+> the allowlist: the transcript is never used to build a path, never passed to a
+> shell, and never executed. A name that matches nothing is refused out loud
+> rather than guessed at. Uninstallers, repair tools and readme links are
+> excluded from the index.
+
+### Reading the screen
+
+Four sources, cheapest first, each falling back to the next:
+
+| Source | Needs | Notes |
+| --- | --- | --- |
+| Window title | nothing | Always available |
+| Selected text | nothing | Clipboard round-trip; your clipboard is restored |
+| Focused control text | `[screen]` extra | Exact text, no OCR errors |
+| OCR | `[screen]` extra | The recogniser built into Windows — no model download |
+
+Without the `[screen]` extra you still get the title and your selection, which
+covers the common case ("what is this error" with the error selected).
+
+## Chat history
+
+Because it runs in the background, the console is no longer the record of what
+happened. Two files under `%LOCALAPPDATA%\VoiceVibe\` are:
+
+- `logsoicevibe.log` — rotating diagnostic log
+- `history\YYYY-MM-DD.jsonl` — one JSON object per turn: what was heard, where
+  it went, what was inserted, which keys fired, and any reply
+
+Old history is pruned after `[history].keep_days`. Set `enabled = false` to keep
+nothing at all.
 ## How it works
 
 ```mermaid
@@ -371,35 +495,49 @@ Voice Vibe reads [`config.toml`](config.toml) at startup. Restart after changing
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `dictate` | `f9` | Tap-to-toggle one-shot dictation |
+| `dictate` | `ctrl+alt+space` | Tap-to-toggle one-shot dictation |
 | `dictate_hold` | empty | Optional hold-to-record binding |
-| `session` | `f10` | Open/close the persistent wake-word session |
-| `speak` | `shift+f9` | Tap-to-toggle TTS capture |
+| `session` | `ctrl+alt+w` | Open/close the persistent wake-word session |
+| `speak` | `ctrl+alt+shift+space` | Tap-to-toggle TTS capture |
 | `speak_hold` | empty | Optional hold-to-record TTS binding |
-| `quit` | `ctrl+shift+f12` | Quit Voice Vibe |
+| `quit` | `ctrl+alt+shift+q` | Quit Voice Vibe |
 
-Hotkey syntax is lowercase tokens separated by `+`, for example `ctrl+alt+d`, `shift+f9`, or `alt_gr`. Left/right modifier variants normalize to the same token. When bindings overlap, the most specific combination wins, so `Shift+F9` never also fires plain `F9`.
+Hotkey syntax is lowercase tokens separated by `+`, for example `ctrl+alt+d`, `shift+f9`, or `alt_gr`. Left/right modifier variants normalize to the same token. When bindings overlap, the most specific combination wins, so `ctrl+alt+shift+space` never also fires `ctrl+alt+space`.
+
+The defaults deliberately avoid F-keys: most laptops send brightness,
+volume and media actions from the top row unless Fn is held, so an F-key
+binding can silently do nothing. To see what any key or combination is
+called on your keyboard, run `.\run.bat --key-test` and press it.
 
 ### `[model]`
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `name` | `large-v3-turbo` | Whisper model or compatible CTranslate2 model name |
+| `name` | `auto` | `auto` matches your hardware; or pin any Whisper / CTranslate2 model |
 | `device` | `auto` | `auto`, `cuda`, or `cpu` |
 | `compute_type` | `auto` | GPU defaults to `float16`; CPU defaults to `int8` |
+| `cpu_threads` | `0` | CPU inference threads. `0` leaves one core free for audio capture |
 | `language` | `en` | ISO-639-1 code, or `auto` for detection |
 | `beam_size` | `1` | Decoder beam width; larger may improve accuracy but adds latency |
 | `vad_filter` | `true` | Apply Silero VAD before decoding |
 | `initial_prompt` | empty | Bias technical vocabulary and spelling |
 
-Recommended models:
+What `auto` chooses, and what you can pin instead:
 
-| Hardware | Model | Notes |
-| --- | --- | --- |
-| NVIDIA GPU with ~8 GB VRAM | `large-v3-turbo` | Best default balance |
-| CPU / lower memory | `small` or `base` | Faster startup and lower memory |
-| English throughput | `distil-large-v3` | English-oriented distilled model |
-| Maximum multilingual accuracy | `large-v3` | Heavier and slower |
+| Hardware | Picks | Approx. size | Notes |
+| --- | --- | --- | --- |
+| Any NVIDIA GPU | `large-v3-turbo` | ~1.6 GB | Best accuracy, needs VRAM |
+| CPU, 8+ cores | `small.en` | ~500 MB | Good accuracy, keeps up while typing |
+| CPU, 4+ cores | `base.en` | ~150 MB | The practical default for budget laptops |
+| CPU, 2 cores or <4 GB RAM | `tiny.en` | ~75 MB | Fastest; noticeably less accurate |
+
+The `.en` builds are both smaller *and* more accurate than the multilingual
+models of the same size for English, which is the right trade when the machine
+is the constraint. Set `language` to anything other than `en` and you should pin
+a multilingual model (`tiny`, `base`, `small`, `large-v3`) yourself.
+
+`distil-small.en`, `distil-medium.en` and `distil-large-v3` are also available
+as English-oriented distilled options.
 
 ### `[audio]`
 
@@ -439,7 +577,7 @@ Increase `silence_duration` if Voice Vibe cuts you off while thinking. Lower it 
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `enabled` | `true` | Require a wake phrase in F10 mode |
+| `enabled` | `true` | Require a wake phrase in session mode |
 | `phrases` | hey/okay/ok computer | Accepted wake phrases |
 | `fuzzy` | `0.82` | Per-word near-match threshold; `0` disables |
 | `bias_prompt` | `true` | Prime Whisper with the wake phrases |
@@ -447,7 +585,7 @@ Increase `silence_duration` if Voice Vibe cuts you off while thinking. Lower it 
 | `active_timeout` | `20.0` | Re-arm after inactivity; `0` disables |
 | `log_ignored` | `true` | Show armed-state transcripts for tuning |
 
-Set `enabled = false` to make F10 insert every segmented utterance without a wake phrase.
+Set `enabled = false` to make the session insert every segmented utterance without a wake phrase.
 
 ### `[output]`
 
@@ -455,6 +593,7 @@ Set `enabled = false` to make F10 insert every segmented utterance without a wak
 | --- | --- | --- |
 | `mode` | `paste` | `paste` or simulated `type` |
 | `restore_clipboard` | `true` | Restore previous clipboard text after paste |
+| `restore_delay` | `0.5` | Seconds before restoring. Runs off-thread, so it never delays Enter |
 | `type_delay` | `0.004` | Delay per character in type mode |
 | `add_trailing_space` | `true` | Append a space after normal dictation |
 | `strip_trailing_period` | `false` | Remove a final period |
@@ -487,7 +626,77 @@ When `save_dir` is set, generation uses the non-streaming path so the audio can 
 | --- | --- | --- |
 | `sounds` | `true` | Enable audible state cues |
 | `tray_icon` | `true` | Show the state indicator |
-| `log_transcripts` | `true` | Print recognized text in the console |
+| `log_transcripts` | `true` | Include recognized text in the log |
+
+### `[overlay]`
+
+The floating status orb.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `true` | Show the orb at all |
+| `position` | `bottom-right` | Also `bottom-left`, `top-right`, `top-left` |
+| `size` | `58` | Orb diameter in pixels |
+| `margin` | `28` | Distance from the screen edge |
+| `opacity` | `0.95` | 0.1 to 1.0 |
+| `expand_seconds` | `4.0` | How long a caption stays up |
+| `max_width` | `460` | Caption width cap in pixels |
+
+### `[history]`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `true` | Write the JSONL turn history |
+| `keep_days` | `30` | Delete history older than this; `0` keeps everything |
+
+### `[assistant]`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `true` | Master switch for replies. `false` restores pure dictation |
+| `launch_apps` | `true` | Handle "open X" / "launch X" |
+| `answer_screen` | `true` | Handle screen questions |
+| `discover_apps` | `true` | Index Start Menu shortcuts at startup |
+| `match_threshold` | `0.78` | How close a spoken app name must be, 0 to 1 |
+| `speak_replies` | `true` | Speak confirmations through the Windows SAPI voice |
+| `voice_rate` | `1` | -10 (slowest) to 10 (fastest) |
+
+### `[airoot]`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `false` | Show the Airoot overlay while listening |
+| `exe` | empty | Full path to `AirootVoiceOverlay.exe` |
+| `port` | `53873` | UDP port compiled into the overlay |
+| `preload` | `true` | Start it hidden at launch so the first show is instant |
+| `quit_on_exit` | `true` | Close it on exit, if Voice Vibe started it |
+
+### `[screen]`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `true` | Allow reading the screen at all |
+| `use_selection` | `true` | Grab the selection via a clipboard round-trip |
+| `use_uia` | `true` | Read the focused control (needs the `screen` extra) |
+| `use_ocr` | `true` | Windows OCR fallback (needs the `screen` extra) |
+| `max_chars` | `4000` | Cap on extracted text |
+
+### `[[apps]]`
+
+Apps you can open by voice, beyond the auto-discovered Start Menu entries:
+
+```toml
+[[apps]]
+say = "blender"
+path = "C:/Program Files/Blender Foundation/Blender 4.2/blender.exe"
+
+[[apps]]
+say = "vs code"
+path = "C:/Users/you/AppData/Local/Programs/Microsoft VS Code/Code.exe"
+```
+
+Optional `args = [...]` is passed as a list, never through a shell. See the
+warning under [Opening apps](#opening-apps).
 
 ### `[[replacements]]`
 
@@ -527,7 +736,10 @@ run.bat [options]
 | `--wake "PHRASE"` | Temporarily override wake phrases; comma-separated accepted |
 | `--rounds N` | Attempts during `--wake-test` |
 | `--say "TEXT"` | Synthesize text through Soprano and exit |
+| `--key-test` | Show the hotkey name of each key you press |
 | `-v, --verbose` | Enable debug logging |
+| `--version` | Print the version and exit |
+| `--console` | Keep a visible console window (handled by `run.bat`) |
 
 Examples:
 
@@ -578,7 +790,7 @@ Use this whenever changing microphones, room acoustics, models, language, or the
 1. Start `run.bat`.
 2. Open Notepad.
 3. Click inside the document so the caret blinks.
-4. Tap F9, speak a complete sentence, and tap F9 again.
+4. Press Ctrl+Alt+Space, speak a complete sentence, and press it again.
 5. Confirm the console target title says Notepad and the sentence appears there.
 
 Then test a browser input and a terminal because applications handle simulated paste differently.
@@ -619,7 +831,7 @@ If the title is the terminal, the terminal had focus. Click the desired field an
 - Remove broad aliases from `wake.phrases`.
 - Do not use a single everyday word such as `computer`, `start`, or `hello`.
 
-### F10 cuts sentences too early
+### The session cuts sentences too early
 
 Raise:
 
@@ -653,6 +865,52 @@ keys = "ctrl+enter"
 
 Windows prevents a normal process from injecting input into an administrator-elevated application. Run Voice Vibe at the same privilege level, or avoid elevating the target.
 
+### Dictation is slow
+
+Check what model is loaded with `.
+un.bat --check`. If `[model].name` is
+pinned to something large, set it back to `"auto"`. On CPU, `tiny.en` and
+`base.en` are several times faster than `small.en`, and far faster than
+`large-v3-turbo`, which is not a sensible CPU choice on a budget machine.
+
+If audio drops out mid-sentence while transcribing, lower `[model].cpu_threads`
+so a core stays free for capture.
+
+### The orb is not visible
+
+Check `[overlay].enabled`. Some remote-desktop and screen-capture setups do not
+composite layered windows; the tray icon still works, and the orb disables
+itself rather than failing. Move it with `[overlay].position` if it is behind a
+taskbar element.
+
+### A hotkey does nothing
+
+On most laptops the top row sends brightness, volume or media actions unless
+you hold **Fn** — or until you turn on Fn Lock, often Fn+Esc. If you rebound a
+hotkey to an F-key and it does nothing, that is why.
+
+Run `.\run.bat --key-test` and press the key. If it shows as something like
+`media_volume_up`, that is what your laptop really sends; either bind that
+name, hold Fn, or pick a modifier combination instead. If nothing prints at
+all, the key is handled by firmware and never reaches Windows.
+
+Also check the focused app is not running as administrator: Windows does not
+deliver key events from an elevated window to a normal one.
+
+### The Airoot overlay does not appear
+
+Run `.
+un.bat --console -v` and look for `[airoot] is enabled but the overlay
+was not found` — that means `[airoot].exe` is wrong. The path must point at the
+file itself, not its folder. If another copy of the overlay is already running,
+Voice Vibe uses that one rather than starting its own.
+
+### "I don't know an app called ..."
+
+The name did not match anything in the allowlist, and it is refused rather than
+guessed at. Run with `--console -v` to see what was indexed, then add an
+explicit `[[apps]]` entry with the exact path.
+
 ### CUDA is unavailable
 
 Run `--check`. Voice Vibe registers pip-installed cuBLAS and cuDNN DLL paths before importing CTranslate2. If CUDA still reports zero devices, update the NVIDIA driver or set `model.device = "cpu"`.
@@ -677,9 +935,9 @@ Network access is required initially to install packages and download model file
 > [!WARNING]
 > `log_transcripts = true` prints recognized content in the terminal. Disable it when dictating sensitive information or when terminal history is retained.
 
-### F10 privacy detail
+### Session privacy detail
 
-Software cannot recognize “hey computer” without listening for it. In armed F10 mode, the microphone remains open and the local segmenter identifies utterances. Whisper may locally transcribe those utterances to decide whether they contain the wake phrase. Non-matching text is discarded by the application and never inserted. Set `wake.log_ignored = false` to avoid printing ignored text in the console.
+Software cannot recognize “hey computer” without listening for it. In an armed session, the microphone remains open and the local segmenter identifies utterances. Whisper may locally transcribe those utterances to decide whether they contain the wake phrase. Non-matching text is discarded by the application and never inserted. Set `wake.log_ignored = false` to avoid printing ignored text in the console.
 
 ## Performance
 
@@ -695,14 +953,14 @@ These are development-machine observations, not guaranteed benchmarks. Audio len
 ## Limitations
 
 - Windows is the tested target. Some dependencies are cross-platform, but hotkeys, DLL registration, sounds, and input behavior are Windows-oriented.
-- Global hotkeys are not suppressed; F9/F10 may still reach the focused application.
+- Global hotkeys are not suppressed; the key press may still reach the focused application.
 - Wake detection uses Whisper rather than a dedicated low-power wake-word model, so armed utterances incur local transcription work.
 - Wake matching is text-based; recognition quality still depends on the microphone, accent, room, and chosen phrase.
 - Text is inserted into the field focused at insertion time. Switching windows while a segment transcribes changes the destination.
 - Clipboard restoration currently restores clipboard text, not every possible rich clipboard format.
 - Elevated applications may reject input from a non-elevated Voice Vibe process.
 - Soprano is English-only, cannot clone the speaker’s voice, and may mispronounce uncommon technical terms.
-- Simultaneous F9/Shift+F9 recording is blocked while F10 session mode owns the microphone.
+- Dictate and speak recordings are blocked while a session owns the microphone.
 
 ## Project structure
 
@@ -711,21 +969,29 @@ Voice_Vibe/
 ├── assets/
 │   └── voice-vibe-demo.gif      # animated README walkthrough
 ├── src/voicevibe/
+│   ├── __init__.py              # package marker and version
 │   ├── __main__.py              # CLI and diagnostics
+│   ├── airoot.py                # drives the Airoot listening overlay
 │   ├── app.py                   # state machine and orchestration
 │   ├── audio.py                 # one-shot + segmented microphone capture
 │   ├── config.py                # TOML defaults and loading
 │   ├── cuda_setup.py            # Windows NVIDIA DLL registration
 │   ├── feedback.py              # tray icon and audible state cues
+│   ├── history.py               # rotating log + JSONL turn history
 │   ├── hotkey.py                # global bindings and overlap resolution
 │   ├── inserter.py              # paste/type output and voice commands
+│   ├── intent.py                # routes a transcript; produces replies
+│   ├── launcher.py              # allowlisted app launching
+│   ├── overlay.py               # the floating status orb (Win32 layered window)
+│   ├── screen.py                # title / selection / UI Automation / OCR
 │   ├── selftest.py              # microphone, pipeline, and wake tests
-│   ├── speaker.py               # optional Soprano TTS integration
-│   ├── transcriber.py           # faster-whisper wrapper
+│   ├── speaker.py               # Soprano TTS + the Windows SAPI voice
+│   ├── transcriber.py           # faster-whisper wrapper and hardware tiering
 │   └── wake.py                  # exact/fuzzy wake phrase matcher
+├── tests/                       # stdlib-only unit tests (no pytest needed)
 ├── config.toml                  # user-facing configuration
 ├── pyproject.toml               # pinned dependencies and extras
-├── run.bat                      # Windows launcher
+├── run.bat                      # Windows launcher (background by default)
 └── README.md
 ```
 
@@ -738,11 +1004,18 @@ Activate the environment and run the module directly:
 python -m voicevibe -v
 ```
 
-Compile-check the source:
+Compile-check the source and run the tests:
 
 ```powershell
 python -m compileall -q src
+cd tests; python -m unittest discover -s .
 ```
+
+The suite is stdlib-only and stubs `pynput`/`pyperclip`, so it runs on a bare
+checkout with nothing installed. It covers the logic that is easy to get subtly
+wrong and expensive to debug by hand: wake matching (including the false
+positives), trailing-command boundaries, hotkey overlap, and intent routing —
+especially that ordinary speech is never mistaken for a command.
 
 When changing wake matching, validate both intended matches and false positives. A wake matcher that accepts a phrase must also prove that ordinary sentences containing only part of that phrase remain ignored.
 
@@ -767,9 +1040,9 @@ Yes after dependencies and models are downloaded. Set the desired models up once
 
 Set `model.language` to an ISO-639-1 code or `auto`. Whisper is multilingual, but the default wake phrases and Soprano TTS are English-oriented. Add wake and command phrases for your language and verify them with `--wake-test`.
 
-### Can I keep F10 open all day?
+### Can I keep a session open all day?
 
-Yes. It remains armed after every submit command. Remember that local audio capture and wake detection remain active while the session is open; tap F10 to close it completely.
+Yes. It remains armed after every submit command. Remember that local audio capture and wake detection remain active while the session is open; press Ctrl+Alt+W to close it completely.
 
 ### Can I use a foot pedal or macro key?
 
