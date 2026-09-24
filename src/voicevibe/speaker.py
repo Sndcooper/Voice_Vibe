@@ -8,6 +8,9 @@ extra and is imported lazily: the dictation path never pays for it.
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
@@ -149,3 +152,79 @@ def _play_file(path: Path) -> None:
     data = np.frombuffer(frames, dtype=np.int16).astype("float32") / 32768.0
     sd.play(data, samplerate=rate)
     sd.wait()
+
+
+class SystemVoice:
+    """Windows' built-in SAPI5 voice, for short spoken replies.
+
+    Soprano sounds better but drags in torch and transformers -- several
+    gigabytes of install and a large resident footprint. Confirmations like
+    "Opening Blender" do not justify that on a low-spec machine, and SAPI is
+    already present on every Windows install at no memory cost.
+
+    Two backends: comtypes when available (in-process, instant), otherwise a
+    detached PowerShell call.
+    """
+
+    def __init__(self, enabled: bool = True, rate: int = 1) -> None:
+        self.enabled = enabled and sys.platform == "win32"
+        self.rate = max(-10, min(10, int(rate)))
+        self._voice = None
+        self._checked = False
+        self._lock = threading.Lock()
+
+    def _com_voice(self):  # noqa: ANN201
+        if self._checked:
+            return self._voice
+        self._checked = True
+        try:
+            import comtypes.client
+
+            self._voice = comtypes.client.CreateObject("SAPI.SpVoice")
+            self._voice.Rate = self.rate
+        except Exception as exc:
+            log.debug("SAPI via comtypes unavailable: %s", exc)
+            self._voice = None
+        return self._voice
+
+    def _powershell(self, text: str) -> None:
+        """Fallback path. The script is a fixed string and the text travels in
+        an environment variable, so nothing spoken can alter the command."""
+        env = dict(os.environ, VV_TTS_TEXT=text, VV_TTS_RATE=str(self.rate))
+        script = (
+            "Add-Type -AssemblyName System.Speech;"
+            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+            "$s.Rate = [int]$env:VV_TTS_RATE;"
+            "$s.Speak($env:VV_TTS_TEXT)"
+        )
+        subprocess.Popen(  # noqa: S603 - fixed argv, shell=False, text via env
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            env=env,
+            shell=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+    def say(self, text: str, block: bool = False) -> bool:
+        """Speak `text`. Returns False if no voice was available."""
+        text = " ".join(str(text).split())
+        if not text or not self.enabled:
+            return False
+
+        def run() -> None:
+            with self._lock:
+                voice = self._com_voice()
+                try:
+                    if voice is not None:
+                        voice.Speak(text)
+                    else:
+                        self._powershell(text)
+                except Exception as exc:
+                    log.debug("system voice failed: %s", exc)
+
+        if block:
+            run()
+        else:
+            threading.Thread(target=run, name="system-voice", daemon=True).start()
+        return True
