@@ -1,30 +1,50 @@
 # Voice Vibe configuration. Edit and restart the app.
 
 [hotkeys]
+# Laptops usually send brightness, volume and media actions from F1-F12 unless
+# Fn is held, so the defaults avoid F-keys entirely. To find what any key or
+# combination is called on your keyboard, run:   .\run.bat --key-test
+#
+# Format: modifiers joined with +, e.g. "ctrl+alt+space", "ctrl+shift+d", "f9".
+# Avoid win+ combinations; Windows reserves most of them (win+h is its own
+# voice typing).
+
 # Tap to start recording, tap again to stop -> text is inserted at your cursor.
-dictate = "f9"
+dictate = "ctrl+alt+space"
 # Hold-to-talk variant of the same action. Leave empty to disable.
 dictate_hold = ""
 # Hands-free session. Tap once to open the mic and leave it open: every time you
 # pause, that sentence is transcribed and inserted, then it keeps listening.
 # Tap again to close the session. See [continuous] below.
-session = "f10"
+session = "ctrl+alt+w"
 # Tap to start, tap again to stop -> the text is spoken aloud instead of typed.
 # Needs the optional TTS extra: uv pip install -e ".[tts]"
-speak = "shift+f9"
+speak = "ctrl+alt+shift+space"
 # Hold-to-talk variant of speak. Leave empty to disable.
 speak_hold = ""
 # Tap to quit the app.
-quit = "ctrl+shift+f12"
+quit = "ctrl+alt+shift+q"
 
 [model]
-# tiny | base | small | medium | large-v3 | large-v3-turbo | distil-large-v3
-# large-v3-turbo is the sweet spot on an 8 GB GPU.
-name = "large-v3-turbo"
+# "auto" picks a model this machine can actually keep up with:
+#   GPU present        -> large-v3-turbo / float16
+#   8+ cores, CPU only -> small.en / int8
+#   4+ cores, CPU only -> base.en / int8
+#   2 cores or <4 GB   -> tiny.en / int8
+# Run `run.bat --check` to see what it would choose here.
+#
+# Or pin one: tiny.en | base.en | small.en | medium.en | large-v3 |
+# large-v3-turbo | distil-small.en | distil-medium.en | distil-large-v3
+# The .en builds are smaller *and* more accurate than the multilingual ones
+# for English, which is the right trade when the machine is the constraint.
+name = "auto"
 # auto | cuda | cpu
 device = "auto"
 # auto | float16 | int8_float16 | int8
 compute_type = "auto"
+# CPU inference threads. 0 leaves one core free for audio capture, which stops
+# the microphone dropping blocks mid-sentence on a 2- or 4-core laptop.
+cpu_threads = 0
 # ISO-639-1 code, or "auto" to detect every time (slower, less reliable).
 language = "en"
 beam_size = 1
@@ -47,6 +67,10 @@ max_duration = 300.0
 mode = "paste"
 # Restore whatever was on the clipboard before pasting.
 restore_clipboard = true
+# How long to wait before restoring it, in seconds. The restore happens on a
+# background thread, so raising this never delays a trailing Enter. Raise it if
+# a slow app (Electron chat boxes especially) pastes your previous clipboard.
+restore_delay = 0.5
 # Seconds between keystrokes in "type" mode.
 type_delay = 0.004
 add_trailing_space = true
@@ -58,7 +82,7 @@ voice_commands = true
 # Raise it if a chat box submits before your text lands.
 command_delay = 0.12
 
-# Hands-free session mode, used by the `session` hotkey (F10).
+# Hands-free session mode, used by the `session` hotkey (Ctrl+Alt+W).
 [continuous]
 # How long a pause ends a sentence and flushes it, in seconds.
 # Lower = snappier but risks cutting you off mid-thought. 3.0 is very deliberate.
@@ -158,15 +182,179 @@ keys = "enter"
 say = "submit"
 keys = "enter"
 
+[[commands]]
+say = "next field"
+keys = "tab"
+ends_dictation = false
+
+[[commands]]
+say = "go back"
+keys = "shift+tab"
+ends_dictation = false
+
+[[commands]]
+say = "never mind that"
+keys = "esc"
+
+[[commands]]
+say = "select all"
+keys = "ctrl+a"
+ends_dictation = false
+
+[[commands]]
+say = "copy that"
+keys = "ctrl+c"
+ends_dictation = false
+
+[[commands]]
+say = "paste that"
+keys = "ctrl+v"
+ends_dictation = false
+
+[[commands]]
+say = "cut that"
+keys = "ctrl+x"
+ends_dictation = false
+
+[[commands]]
+say = "undo that"
+keys = "ctrl+z"
+ends_dictation = false
+
+[[commands]]
+say = "redo that"
+keys = "ctrl+y"
+ends_dictation = false
+
+[[commands]]
+say = "save it"
+keys = "ctrl+s"
+
+[[commands]]
+say = "find it"
+keys = "ctrl+f"
+ends_dictation = false
+
+[[commands]]
+say = "close tab"
+keys = "ctrl+w"
+
+[[commands]]
+say = "switch window"
+keys = "alt+tab"
+
+[[commands]]
+say = "scroll down"
+keys = "page_down"
+ends_dictation = false
+
+[[commands]]
+say = "scroll up"
+keys = "page_up"
+ends_dictation = false
+
+[[commands]]
+say = "go to the top"
+keys = "ctrl+home"
+ends_dictation = false
+
+[[commands]]
+say = "go to the end"
+keys = "ctrl+end"
+ends_dictation = false
+
 # Some chat boxes use Ctrl+Enter to send and plain Enter for a newline.
 # [[commands]]
 # say = "send message"
 # keys = "ctrl+enter"
 
-# [[commands]]
-# say = "cancel that"
-# keys = "esc"
+# Apps you can open by voice: say "open blender", "launch chrome".
+#
+# Start Menu shortcuts and stock Windows tools are found automatically, so this
+# table is only needed for apps that are not in the Start Menu, or to add a
+# shorthand the matcher does not guess ("vs code" is a common one).
+#
+# SECURITY: what you say only ever *selects* a row from this allowlist plus the
+# discovered shortcuts. A spoken name is never turned into a path or run through
+# a shell, and a name that matches nothing is refused out loud.
+#
+# [[apps]]
+# say = "vs code"
+# path = "C:/Users/you/AppData/Local/Programs/Microsoft VS Code/Code.exe"
 
-# [[commands]]
-# say = "next field"
-# keys = "tab"
+# [[apps]]
+# say = "blender"
+# path = "C:/Program Files/Blender Foundation/Blender 4.2/blender.exe"
+
+# The floating status orb: a frameless, click-through circle pinned above every
+# other window. It is not a window you can move or close; it shows state and the
+# last thing that happened, then fades back to a dot.
+[overlay]
+enabled = true
+# bottom-right | bottom-left | top-right | top-left
+position = "bottom-right"
+size = 58
+margin = 28
+opacity = 0.95
+# How long a caption stays up before the orb shrinks back, in seconds.
+expand_seconds = 4.0
+max_width = 460
+
+# The app runs in the background with no console, so this is the record of what
+# it heard and did. Files live in %LOCALAPPDATA%\VoiceVibe\.
+[history]
+enabled = true
+# Delete history files older than this. 0 keeps everything.
+keep_days = 30
+
+# Replies. There is no language model here: answers are matched and extracted,
+# never generated, so this costs no extra memory and cannot invent an answer.
+[assistant]
+enabled = true
+# "open <app>" launches from the allowlist above.
+launch_apps = true
+# "what's on my screen", "what is this error", "read this", "where am I".
+answer_screen = true
+# Index Start Menu shortcuts at startup so most apps work without [[apps]] rows.
+discover_apps = true
+# How close a spoken name must be to an app name, 0 to 1. Lower matches more
+# loosely and risks opening the wrong thing.
+match_threshold = 0.78
+# Speak confirmations through the Windows voice. This is SAPI, not Soprano:
+# instant, already installed, and no model to load.
+speak_replies = true
+# -10 (slowest) to 10 (fastest).
+voice_rate = 1
+
+# The Airoot listening overlay: the animated red logo and "Listening" pill that
+# appears at the bottom centre of the screen while the mic is taking in speech.
+# It is a separate app; Voice Vibe preloads it hidden and shows it the moment
+# recording starts (dictate, speak, or a woken session), then hides it again.
+#
+# It never takes keyboard focus, so dictation still lands in your editor.
+# Costs roughly the memory of a small Qt app while running; set enabled = false
+# on very low-RAM machines -- the built-in orb above shows the same state.
+[airoot]
+enabled = true
+exe = "C:/Users/vilas/Documents/Codex/2026-09-23/make/outputs/AirootVoiceOverlay.exe"
+# Must match the port compiled into the overlay.
+port = 53873
+# Start it hidden when Voice Vibe starts, so the first recording shows it
+# instantly instead of after its few-second startup.
+preload = true
+# Close it when Voice Vibe quits -- only if Voice Vibe was the one that started it.
+quit_on_exit = true
+
+# How the screen is read when you ask about it.
+[screen]
+enabled = true
+# Grab the current selection with a clipboard round-trip. Needs nothing extra
+# and is the most accurate source. Your clipboard is always restored.
+use_selection = true
+# Read the focused control directly. Needs the optional extra:
+#   uv pip install -e ".[screen]"
+use_uia = true
+# Fall back to the text recogniser built into Windows. Also needs [screen].
+# No model download and no resident memory: it is the OS engine.
+use_ocr = true
+max_chars = 4000
