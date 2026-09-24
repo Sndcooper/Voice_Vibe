@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
+import threading
 import time
 from typing import Any
 
@@ -34,6 +35,8 @@ def focused_window() -> str:
         import ctypes
 
         user32 = ctypes.windll.user32
+        # An HWND is truncated on 64-bit without an explicit restype.
+        user32.GetForegroundWindow.restype = ctypes.c_void_p
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
             return ""
@@ -59,6 +62,11 @@ _MODIFIER_KEYS = {
     "super": Key.cmd,
 }
 
+def _optional(name: str):  # noqa: ANN201
+    """Some Key members are platform-specific; skip the ones this OS lacks."""
+    return getattr(Key, name, None)
+
+
 _MAIN_KEYS = {
     "enter": Key.enter,
     "return": Key.enter,
@@ -78,6 +86,26 @@ _MAIN_KEYS = {
     "page_down": Key.page_down,
     **{f"f{n}": getattr(Key, f"f{n}") for n in range(1, 13)},
 }
+
+# Added separately because pynput does not define all of these on every platform.
+_MAIN_KEYS.update(
+    {
+        name: key
+        for name, key in {
+            "insert": _optional("insert"),
+            "caps_lock": _optional("caps_lock"),
+            "print_screen": _optional("print_screen"),
+            "menu": _optional("menu"),
+            "play_pause": _optional("media_play_pause"),
+            "next_track": _optional("media_next"),
+            "previous_track": _optional("media_previous"),
+            "volume_up": _optional("media_volume_up"),
+            "volume_down": _optional("media_volume_down"),
+            "mute": _optional("media_volume_mute"),
+        }.items()
+        if key is not None
+    }
+)
 
 
 def _resolve_keys(spec: str) -> tuple[list[Key], Key | str | None]:
@@ -216,11 +244,29 @@ class Inserter:
             self.keyboard.release("v")
 
         if previous is not None:
-            time.sleep(0.25)
+            self._restore_clipboard(previous, text)
+
+    def _restore_clipboard(self, previous: str, pasted: str) -> None:
+        """Put the old clipboard back once the target has had time to read ours.
+
+        Restoring inline was a race that slow apps (Electron chat boxes
+        especially) lost, pasting the *previous* text. Waiting longer inline
+        would instead delay the trailing Enter, so the wait happens off-thread.
+        """
+        delay = float(self.cfg.get("restore_delay", 0.5) or 0)
+
+        def run() -> None:
+            time.sleep(delay)
             try:
+                # If the clipboard no longer holds what we put there, something
+                # else claimed it in the meantime. Don't clobber that.
+                if pyperclip.paste() != pasted:
+                    return
                 pyperclip.copy(previous)
             except Exception:
                 pass
+
+        threading.Thread(target=run, name="clipboard-restore", daemon=True).start()
 
     def _type(self, text: str) -> None:
         self._release_modifiers()
