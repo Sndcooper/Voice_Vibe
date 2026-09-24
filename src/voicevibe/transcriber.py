@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import ctypes
 import logging
+import os
+import sys
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -17,7 +21,74 @@ MODEL_ALIASES = {
     "large-v3-turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
     "turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
     "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
+    "distil-small.en": "Systran/faster-distil-whisper-small.en",
+    "distil-medium.en": "Systran/faster-distil-whisper-medium.en",
 }
+
+
+def memory_gb() -> tuple[float, float]:
+    """(total, free) system RAM in GB. Zeros if it cannot be determined."""
+    if sys.platform == "win32":
+        class _Status(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        try:
+            status = _Status()
+            status.dwLength = ctypes.sizeof(_Status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                gb = 1024.0**3
+                return status.ullTotalPhys / gb, status.ullAvailPhys / gb
+        except Exception:
+            pass
+    try:
+        gb = 1024.0**3
+        pages = os.sysconf("SC_PHYS_PAGES")
+        size = os.sysconf("SC_PAGE_SIZE")
+        return pages * size / gb, 0.0
+    except (ValueError, AttributeError, OSError):
+        return 0.0, 0.0
+
+
+@dataclass(frozen=True)
+class Tier:
+    model: str
+    compute: str
+    note: str
+
+
+# Ordered worst-hardware-first. The English-only `.en` builds are both smaller
+# and more accurate than their multilingual siblings at the same size, which is
+# the right trade on a machine that cannot afford a larger model.
+def recommend_tier() -> Tier:
+    """Pick a model that will actually keep up on this machine.
+
+    Defaults target low-spec laptops: no discrete GPU, few cores, little RAM.
+    A big model that takes eight seconds per sentence is unusable for dictation
+    regardless of how accurate it is.
+    """
+    if cuda_available():
+        return Tier("large-v3-turbo", "float16", "GPU available")
+
+    total, _ = memory_gb()
+    cores = os.cpu_count() or 2
+
+    if total and total < 4.0:
+        return Tier("tiny.en", "int8", "under 4 GB RAM")
+    if cores >= 8 and (not total or total >= 8.0):
+        return Tier("small.en", "int8", "8+ cores")
+    if cores >= 4:
+        return Tier("base.en", "int8", "4+ cores")
+    return Tier("tiny.en", "int8", "2 cores or fewer")
 
 
 class Transcriber:
@@ -39,8 +110,17 @@ class Transcriber:
             compute = "float16" if self.device == "cuda" else "int8"
         self.compute_type = compute
 
-        name = str(model_cfg.get("name", "large-v3-turbo"))
+        name = str(model_cfg.get("name", "auto")).lower()
+        if name == "auto":
+            tier = recommend_tier()
+            name = tier.model
+            log.info("Model auto-selected: %s (%s).", name, tier.note)
         self.model_name = MODEL_ALIASES.get(name, name)
+
+        # CPU inference spawns one thread per core by default, which starves the
+        # audio callback on a 2- or 4-core laptop and causes dropped frames.
+        workers = max(1, (os.cpu_count() or 2) - 1) if self.device == "cpu" else 0
+        threads = int(model_cfg.get("cpu_threads", 0) or 0) or workers
 
         from faster_whisper import WhisperModel
 
@@ -56,16 +136,30 @@ class Transcriber:
                 self.model_name,
                 device=self.device,
                 compute_type=self.compute_type,
+                cpu_threads=threads if self.device == "cpu" else 0,
             )
         except Exception as exc:
             if self.device == "cpu":
                 raise
-            log.warning("GPU load failed (%s). Falling back to CPU int8.", exc)
-            self.device, self.compute_type = "cpu", "int8"
+            # A GPU-sized model on a CPU that was never meant to run it takes
+            # many seconds per sentence, so drop to what this machine can serve.
+            fallback = recommend_tier()
+            log.warning(
+                "GPU load failed (%s). Falling back to %s on CPU.", exc, fallback.model
+            )
+            self.device, self.compute_type = "cpu", fallback.compute
+            self.model_name = MODEL_ALIASES.get(fallback.model, fallback.model)
             self.model = WhisperModel(
-                self.model_name, device="cpu", compute_type="int8"
+                self.model_name,
+                device="cpu",
+                compute_type=self.compute_type,
+                cpu_threads=workers,
             )
         log.info("Model ready in %.1fs", time.perf_counter() - started)
+
+        # Set by the app when wake phrases bias the decoder. Kept off `cfg` so
+        # biasing stays idempotent instead of concatenating on every call.
+        self.initial_prompt: str | None = str(model_cfg.get("initial_prompt") or "") or None
 
     def warmup(self, sample_rate: int = 16000) -> None:
         """Run one tiny inference so the first real dictation is not slow."""
@@ -80,7 +174,7 @@ class Transcriber:
         language = self.cfg.get("language", "en")
         if isinstance(language, str) and language.lower() in ("", "auto", "none"):
             language = None
-        prompt = self.cfg.get("initial_prompt") or None
+        prompt = self.initial_prompt
 
         segments, _info = self.model.transcribe(
             audio,
