@@ -123,6 +123,11 @@ class HotkeyListener:
             # holding shift+f9 satisfies both, and plain f9 must stay quiet.
             if any(binding.keys < other.keys for other in satisfied):
                 continue
+            # Holding f9 (dictate already running) and *then* adding shift would
+            # otherwise also satisfy shift+f9 and start speak on the same
+            # gesture. A binding never fires on top of an active subset of itself.
+            if any(other.active and other.keys < binding.keys for other in self._bindings):
+                continue
             binding.active = True
             self._fire(binding.on_activate)
 
