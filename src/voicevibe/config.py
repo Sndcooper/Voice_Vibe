@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# tomllib is stdlib from 3.11. pyproject declares 3.10 support, so keep the
+# backport path rather than crashing on import there.
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - 3.10 only
+    import tomli as tomllib
+
 DEFAULTS: dict[str, Any] = {
     "hotkeys": {
-        "dictate": "f9",
+        # Not F-keys: most laptops send brightness/volume from the top row
+        # unless Fn is held, so an F-key default silently does nothing.
+        "dictate": "ctrl+alt+space",
         "dictate_hold": "",
-        "session": "f10",
-        "speak": "shift+f9",
+        "session": "ctrl+alt+w",
+        "speak": "ctrl+alt+shift+space",
         "speak_hold": "",
-        "quit": "ctrl+shift+f12",
+        "quit": "ctrl+alt+shift+q",
     },
     "continuous": {
         "silence_duration": 1.5,
@@ -34,9 +42,10 @@ DEFAULTS: dict[str, Any] = {
         "log_ignored": True,
     },
     "model": {
-        "name": "large-v3-turbo",
+        "name": "auto",
         "device": "auto",
         "compute_type": "auto",
+        "cpu_threads": 0,
         "language": "en",
         "beam_size": 1,
         "vad_filter": True,
@@ -51,6 +60,7 @@ DEFAULTS: dict[str, Any] = {
     "output": {
         "mode": "paste",
         "restore_clipboard": True,
+        "restore_delay": 0.5,
         "type_delay": 0.004,
         "add_trailing_space": True,
         "strip_trailing_period": False,
@@ -75,6 +85,42 @@ DEFAULTS: dict[str, Any] = {
         "tray_icon": True,
         "log_transcripts": True,
     },
+    "overlay": {
+        "enabled": True,
+        "position": "bottom-right",
+        "size": 58,
+        "margin": 28,
+        "opacity": 0.95,
+        "expand_seconds": 4.0,
+        "max_width": 460,
+    },
+    "history": {
+        "enabled": True,
+        "keep_days": 30,
+    },
+    "assistant": {
+        "enabled": True,
+        "launch_apps": True,
+        "answer_screen": True,
+        "discover_apps": True,
+        "match_threshold": 0.78,
+        "speak_replies": True,
+        "voice_rate": 1,
+    },
+    "airoot": {
+        "enabled": False,
+        "exe": "",
+        "port": 53873,
+        "preload": True,
+        "quit_on_exit": True,
+    },
+    "screen": {
+        "enabled": True,
+        "use_selection": True,
+        "use_uia": True,
+        "use_ocr": True,
+        "max_chars": 4000,
+    },
 }
 
 
@@ -88,6 +134,12 @@ class Config:
     output: dict[str, Any] = field(default_factory=dict)
     speech: dict[str, Any] = field(default_factory=dict)
     feedback: dict[str, Any] = field(default_factory=dict)
+    overlay: dict[str, Any] = field(default_factory=dict)
+    history: dict[str, Any] = field(default_factory=dict)
+    assistant: dict[str, Any] = field(default_factory=dict)
+    screen: dict[str, Any] = field(default_factory=dict)
+    airoot: dict[str, Any] = field(default_factory=dict)
+    apps: list[dict[str, Any]] = field(default_factory=list)
     replacements: list[dict[str, str]] = field(default_factory=list)
     commands: list[dict[str, str]] = field(default_factory=list)
     path: Path | None = None
@@ -134,7 +186,7 @@ def load_config(explicit: str | Path | None = None) -> Config:
         with path.open("rb") as handle:
             raw = tomllib.load(handle)
 
-    tables = ("replacements", "commands")
+    tables = ("replacements", "commands", "apps")
     merged = _merge(DEFAULTS, {k: v for k, v in raw.items() if k not in tables})
     replacements = [
         {"find": str(item.get("find", "")), "replace": str(item.get("replace", ""))}
@@ -153,6 +205,15 @@ def load_config(explicit: str | Path | None = None) -> Config:
         for item in raw.get("commands", [])
         if item.get("say") and item.get("keys")
     ]
+    apps = [
+        {
+            "say": str(item.get("say", "")).strip(),
+            "path": str(item.get("path", "")).strip(),
+            "args": [str(a) for a in item.get("args", [])],
+        }
+        for item in raw.get("apps", [])
+        if item.get("say") and item.get("path")
+    ]
     return Config(
         hotkeys=merged["hotkeys"],
         model=merged["model"],
@@ -162,6 +223,12 @@ def load_config(explicit: str | Path | None = None) -> Config:
         output=merged["output"],
         speech=merged["speech"],
         feedback=merged["feedback"],
+        overlay=merged["overlay"],
+        history=merged["history"],
+        assistant=merged["assistant"],
+        screen=merged["screen"],
+        airoot=merged["airoot"],
+        apps=apps,
         replacements=replacements,
         commands=commands,
         path=path,

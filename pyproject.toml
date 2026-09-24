@@ -5,12 +5,16 @@ description = "Local-first voice dictation with global hotkeys, wake-word sessio
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "faster-whisper==1.2.1",
+    # 4.6 is the first release with Blackwell (sm_120) kernels. Older builds
+    # fail to load on RTX 50-series and silently fall back to CPU.
+    "ctranslate2>=4.6.0",
     "sounddevice==0.5.6",
     "numpy==2.2.6",
     "pynput==1.8.2",
     "pyperclip==1.9.0",
     "pystray==0.19.5",
     "pillow==11.3.0",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -19,8 +23,17 @@ cuda = [
     "nvidia-cudnn-cu12==9.13.1.26",
 ]
 # Text-to-speech for the `speak` hotkey. Pulls in torch + transformers (~3 GB).
+# Not needed for spoken replies: those use the Windows SAPI voice, which is
+# already installed and costs no memory.
 tts = [
     "soprano-tts==0.2.0",
+]
+# Richer screen reading: exact text from the focused control, plus the text
+# recogniser built into Windows. No model weights, a few MB of RAM.
+# Without this, screen answers fall back to the window title and the selection.
+screen = [
+    "comtypes>=1.4.0",
+    "winsdk>=1.0.0b10; python_version < '3.12'",
 ]
 
 [project.scripts]
