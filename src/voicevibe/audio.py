@@ -27,6 +27,8 @@ class Recorder:
         self.device = device
         self.max_frames = int(max_duration * sample_rate)
         self._stream: sd.InputStream | None = None
+        # Stream taken out of `_stream` but not yet drained and closed.
+        self._closing: sd.InputStream | None = None
         self._chunks: list[np.ndarray] = []
         self._frames = 0
         self._lock = threading.Lock()
@@ -35,6 +37,14 @@ class Recorder:
     @property
     def is_recording(self) -> bool:
         return self._stream is not None
+
+    def detach(self) -> None:
+        """Mark the recording finished without paying for the drain yet.
+
+        Lets a caller drop its state lock before the ~0.3s close in `stop()`.
+        """
+        if self._stream is not None:
+            self._closing, self._stream = self._stream, None
 
     def _callback(self, indata, frames, time_info, status) -> None:  # noqa: ANN001
         if status:
@@ -64,7 +74,8 @@ class Recorder:
         self._stream.start()
 
     def stop(self) -> np.ndarray:
-        stream, self._stream = self._stream, None
+        self.detach()
+        stream, self._closing = self._closing, None
         if stream is not None:
             try:
                 # Frames still sitting in the driver buffer have not reached the
@@ -77,7 +88,14 @@ class Recorder:
                 stream.close()
         with self._lock:
             chunks, self._chunks = self._chunks, []
+            overflowed, self._overflowed = self._overflowed, False
             self._frames = 0
+        if overflowed:
+            log.warning(
+                "Recording hit the %.0fs cap and was truncated; raise "
+                "[audio].max_duration if you need longer takes.",
+                self.max_frames / float(self.sample_rate),
+            )
         if not chunks:
             return np.zeros(0, dtype=np.float32)
         return np.concatenate(chunks).astype(np.float32, copy=False)
@@ -146,7 +164,8 @@ class SegmentRecorder:
     def is_recording(self) -> bool:
         return self._stream is not None
 
-    def _emit_locked(self) -> None:
+    def _take_locked(self) -> np.ndarray | None:
+        """Close off the current utterance and return it. Caller holds the lock."""
         chunks, self._speech = self._speech, []
         voiced_blocks = self._voiced_blocks
         trailing_silence = self._silence_blocks
@@ -159,17 +178,22 @@ class SegmentRecorder:
         # Measured on voiced blocks only. The buffer also holds pre-roll and the
         # trailing pause, so its length is not a usable duration filter.
         if voiced_blocks < self._min_voiced:
-            return
+            return None
 
         # Hand Whisper the speech, not the pause that ended it.
         surplus = trailing_silence - self._tail_blocks
         if surplus > 0 and surplus < len(chunks):
             chunks = chunks[:-surplus]
         if not chunks:
-            return
+            return None
 
-        audio = np.concatenate(chunks).astype(np.float32, copy=False)
         self.segments += 1
+        return np.concatenate(chunks).astype(np.float32, copy=False)
+
+    def _deliver(self, audio: np.ndarray | None) -> None:
+        """Hand a finished segment to the consumer. Must run with the lock released."""
+        if audio is None:
+            return
         try:
             self.on_segment(audio)
         except Exception:
@@ -180,6 +204,7 @@ class SegmentRecorder:
             log.debug("audio status: %s", status)
         mono = indata[:, 0].copy()
         rms = float(np.sqrt(np.mean(mono * mono)) + 1e-12)
+        finished: np.ndarray | None = None
 
         with self._lock:
             if self._noise is None:
@@ -198,24 +223,29 @@ class SegmentRecorder:
                     self._silence_blocks >= self._silence_needed
                     or len(self._speech) >= self._max_blocks
                 ):
-                    self._emit_locked()
-                return
+                    finished = self._take_locked()
+            else:
+                self._track_onset_locked(mono, voiced, rms)
 
-            # Idle: track the room's noise level and watch for speech onset.
-            # Only quiet blocks feed the estimate, otherwise the onset of every
-            # sentence drags the floor upward until speech stops registering.
-            if not voiced:
-                self._noise = 0.95 * self._noise + 0.05 * rms
-            self._pre_roll.append(mono)
-            if not voiced:
-                self._voiced_run = 0
-                return
-            self._voiced_run += 1
-            if self._voiced_run >= 2:  # two blocks avoids keyboard-click triggers
-                self._in_speech = True
-                self._speech = list(self._pre_roll)
-                self._pre_roll.clear()
-                self._silence_blocks = 0
+        # Outside the lock: the handler must not be able to stall the next block.
+        self._deliver(finished)
+
+    def _track_onset_locked(self, mono: np.ndarray, voiced: bool, rms: float) -> None:
+        # Idle: track the room's noise level and watch for speech onset.
+        # Only quiet blocks feed the estimate, otherwise the onset of every
+        # sentence drags the floor upward until speech stops registering.
+        if not voiced:
+            self._noise = 0.95 * self._noise + 0.05 * rms
+        self._pre_roll.append(mono)
+        if not voiced:
+            self._voiced_run = 0
+            return
+        self._voiced_run += 1
+        if self._voiced_run >= 2:  # two blocks avoids keyboard-click triggers
+            self._in_speech = True
+            self._speech = list(self._pre_roll)
+            self._pre_roll.clear()
+            self._silence_blocks = 0
 
     def start(self) -> None:
         if self._stream is not None:
@@ -224,6 +254,7 @@ class SegmentRecorder:
             self._speech = []
             self._in_speech = False
             self._silence_blocks = 0
+            self._voiced_blocks = 0
             self._voiced_run = 0
             self._noise = None
             self._pre_roll.clear()
@@ -249,11 +280,13 @@ class SegmentRecorder:
             stream.stop()
         finally:
             stream.close()
+        finished: np.ndarray | None = None
         with self._lock:
             if self._in_speech:
-                self._emit_locked()
+                finished = self._take_locked()
             else:
                 self._speech = []
+        self._deliver(finished)
 
 
 def describe_devices() -> str:
