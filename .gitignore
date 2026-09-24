@@ -4,6 +4,8 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-_*.py
-_*.ps1
-_*.wav
+# Scratch files at the repo root only. Unanchored, these also matched
+# src/voicevibe/__main__.py and __init__.py, which is how they went missing.
+/_*.py
+/_*.ps1
+/_*.wav
