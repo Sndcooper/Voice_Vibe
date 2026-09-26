@@ -148,9 +148,26 @@ def check(config: Config) -> int:
     try:
         import sounddevice as sd
 
-        default_in = sd.default.device[0]
-        name = sd.query_devices(default_in)["name"] if default_in is not None else "none"
-        print(f"\n  microphone  [{default_in}] {name}")
+        from .audio import is_loopback
+
+        system_default = sd.default.device[0]
+        chosen = config.input_device
+        index = chosen if isinstance(chosen, int) else system_default
+        name = sd.query_devices(index)["name"] if index is not None else "none"
+        print(f"\n  microphone  [{index}] {name}")
+
+        if index is not None and is_loopback(name):
+            ok = False
+            print(
+                "\n  FAIL  that is a loopback device: it records what the speakers\n"
+                "        play, not what you say, so every recording is silent.\n"
+                "        Run --list-devices and set [audio].input_device to a\n"
+                "        real microphone's number."
+            )
+        elif system_default is not None and index != system_default:
+            other = sd.query_devices(system_default)["name"]
+            print(f"              Windows default [{system_default}] {other}")
+            print("              is a loopback, so a real microphone was chosen instead.")
     except Exception as exc:
         ok = False
         print(f"\n  microphone  unavailable: {exc}")
@@ -258,6 +275,11 @@ def main(argv: list[str] | None = None) -> int:
         return VoiceVibe(config).run()
     except KeyboardInterrupt:
         return 0
+    except Exception:
+        # Under pythonw there is no console and no stderr, so an uncaught
+        # exception would otherwise kill the app leaving no trace anywhere.
+        log.exception("Voice Vibe stopped because of an unhandled error")
+        return 1
 
 
 if __name__ == "__main__":

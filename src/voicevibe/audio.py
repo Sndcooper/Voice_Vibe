@@ -289,15 +289,109 @@ class SegmentRecorder:
         self._deliver(finished)
 
 
+# Loopback inputs record what the speakers are playing, not what is said. Realtek
+# drivers ship "Stereo Mix" enabled, and it sometimes ends up as the Windows
+# default input, at which point every recording is silence and nothing explains why.
+_LOOPBACK_HINTS = (
+    "stereo mix",
+    "what u hear",
+    "wave out",
+    "output mix",
+    "loopback",
+    "rec. playback",
+    "pc speaker",
+)
+
+# Virtual devices that forward to whatever Windows has set as the default. They
+# are useless as a fallback: if the default is a loopback, so are these.
+_ALIAS_HINTS = ("sound mapper", "primary sound capture", "primary sound driver")
+
+_MIC_HINTS = ("microphone", "mic ", "mic(", "headset")
+
+
+def is_loopback(name: str) -> bool:
+    lowered = str(name).lower()
+    return any(hint in lowered for hint in _LOOPBACK_HINTS)
+
+
+def _is_alias(name: str) -> bool:
+    lowered = str(name).lower()
+    return any(hint in lowered for hint in _ALIAS_HINTS)
+
+
+def _input_devices() -> list[tuple[int, dict]]:
+    try:
+        return [
+            (index, dev)
+            for index, dev in enumerate(sd.query_devices())
+            if dev.get("max_input_channels", 0) > 0
+        ]
+    except Exception as exc:
+        log.debug("could not query devices: %s", exc)
+        return []
+
+
+def default_input_device() -> int | None:
+    """The device to record from when config leaves `input_device` empty.
+
+    Normally the Windows default, but never a loopback: recording the speakers
+    produces silence that looks identical to a broken microphone. When the
+    default is one, fall back to a real input instead of failing quietly.
+    """
+    devices = _input_devices()
+    if not devices:
+        return None
+
+    try:
+        default = sd.default.device[0]
+    except Exception:
+        default = None
+
+    names = dict(devices)
+    if default is not None and default in names and not is_loopback(names[default]["name"]):
+        return None  # the system default is fine; let PortAudio use it
+
+    usable = [
+        (i, d)
+        for i, d in devices
+        if not is_loopback(d["name"]) and not _is_alias(d["name"])
+    ]
+    if not usable:
+        log.warning("Every input device looks like a loopback; recordings may be silent.")
+        return None
+
+    def rank(entry: tuple[int, dict]) -> tuple[int, int]:
+        index, dev = entry
+        lowered = dev["name"].lower()
+        looks_like_mic = any(hint in lowered for hint in _MIC_HINTS)
+        return (0 if looks_like_mic else 1, index)
+
+    chosen = min(usable, key=rank)[0]
+    if default is not None and default in names:
+        log.warning(
+            "Default input [%d] %s is a loopback device and records silence, "
+            "not speech. Using [%d] %s instead. Set [audio].input_device to "
+            "override.",
+            default,
+            names[default]["name"],
+            chosen,
+            names[chosen]["name"],
+        )
+    return chosen
+
+
 def describe_devices() -> str:
     lines = ["Input devices:"]
     try:
         default_in = sd.default.device[0]
     except Exception:
         default_in = None
-    for index, dev in enumerate(sd.query_devices()):
-        if dev.get("max_input_channels", 0) <= 0:
-            continue
-        marker = " (default)" if index == default_in else ""
-        lines.append(f"  [{index}] {dev['name']}{marker}")
+    for index, dev in _input_devices():
+        marks = []
+        if index == default_in:
+            marks.append("default")
+        if is_loopback(dev["name"]):
+            marks.append("loopback -- records the speakers, not you")
+        suffix = f"  ({', '.join(marks)})" if marks else ""
+        lines.append(f"  [{index}] {dev['name']}{suffix}")
     return "\n".join(lines)

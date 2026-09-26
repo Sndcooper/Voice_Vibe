@@ -143,15 +143,26 @@ class Config:
     replacements: list[dict[str, str]] = field(default_factory=list)
     commands: list[dict[str, str]] = field(default_factory=list)
     path: Path | None = None
+    # Memoised auto-detected input device; see the input_device property.
+    _device_cache: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
     def input_device(self) -> int | str | None:
         raw = self.audio.get("input_device", "")
-        if raw in ("", None):
-            return None
-        if isinstance(raw, str) and raw.isdigit():
-            return int(raw)
-        return raw
+        if raw not in ("", None):
+            if isinstance(raw, str) and raw.isdigit():
+                return int(raw)
+            return raw
+
+        # Empty means "the system default" -- except when that default is a
+        # loopback, which silently records the speakers instead of speech.
+        # Resolved once: every caller would otherwise re-scan the device list
+        # and repeat the warning.
+        if "_resolved" not in self._device_cache:
+            from .audio import default_input_device
+
+            self._device_cache["_resolved"] = default_input_device()
+        return self._device_cache["_resolved"]
 
 
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
