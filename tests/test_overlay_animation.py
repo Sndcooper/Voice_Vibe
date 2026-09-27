@@ -101,3 +101,31 @@ class TestOverlayAnimation(unittest.TestCase):
         self.overlay.show_listening()
         self.assertEqual(self.overlay.mode, "listening")
         self.assertEqual(self.overlay.windowOpacity(), 1)
+
+    def test_recording_has_no_status_pill(self):
+        image = self.overlay.grab().toImage()
+        for y in range(140, image.height()):
+            for x in range(image.width()):
+                self.assertEqual(image.pixelColor(x, y).alpha(), 0)
+
+    def test_dance_follows_voice_and_settles_in_silence(self):
+        self.tick(10.1)
+        self.assertEqual(self.overlay.frame_index, 0)
+        self.overlay.audio_peak = .8
+        self.tick(10.2)
+        self.assertGreater(self.overlay.level, .6)
+        self.assertGreater(self.overlay.frame_index, 0)
+        self.overlay.audio_peak = 0
+        for n in range(20):
+            self.tick(10.3 + n * .1)
+        frame = self.overlay.frame_index
+        self.tick(12.4)
+        self.assertEqual(self.overlay.frame_index, frame)
+        self.assertLess(self.overlay.level, .001)
+
+    def test_morph_starts_at_identical_recording_frame(self):
+        self.overlay.level = .7
+        before = self.overlay.grab().toImage()
+        self.overlay.begin_transcribing()
+        after = self.overlay.grab().toImage()
+        self.assertEqual(before, after)

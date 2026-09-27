@@ -208,8 +208,8 @@ speak_replies = true
 # -10 (slowest) to 10 (fastest).
 voice_rate = 1
 
-# The Airoot listening overlay: the animated red logo and "Listening" pill that
-# appears at the bottom centre of the screen while the mic is taking in speech.
+# The Airoot overlay: only the voice-reactive red logo while recording, then
+# a "Transcribing..." pill that fades away when processing finishes.
 # It is a separate app; Voice Vibe preloads it hidden and shows it the moment
 # recording starts (dictate, speak, or a woken session), then hides it again.
 #

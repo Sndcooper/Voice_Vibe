@@ -27,7 +27,7 @@ LOGO_WIDTH = 132
 LOGO_HEIGHT = 92
 LOGO_TOP = 16
 # How much the logo grows at full voice level.
-GROWTH = 0.10
+GROWTH = 0.24
 BASE = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent))
 SPRITESHEET = BASE / "airoot-spritesheet.png"
 ICON = BASE / "airoot-icon.ico"
@@ -172,7 +172,7 @@ class ListeningOverlay(QWidget):
                 # Read only; the UI timer smooths and displays this value.
                 samples = indata[:, 0]
                 rms = float((samples * samples).mean() ** 0.5)
-                self.audio_peak = min(1.0, rms * 13)
+                self.audio_peak = min(1.0, rms * 24)
 
             self.microphone = sd.InputStream(
                 channels=1,
@@ -256,33 +256,7 @@ class ListeningOverlay(QWidget):
         )
         painter.drawPixmap(bounds, frame, QRectF(0, 0, frame.width(), frame.height()))
 
-        # Compact floating recording status, with live bars when speech is heard.
-        pill = QRectF(self.width() / 2 - 84, self.height() - 35, 168, 28)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(17, 18, 23, 205))
-        painter.drawRoundedRect(pill, 14, 14)
-
-        # The dot marks work in progress, so it belongs to transcription only --
-        # while listening the moving bars already show the overlay is live.
-        text_left = pill.left() + 14
-        if self.busy:
-            painter.setBrush(QColor(255, 44, 88))
-            painter.drawEllipse(QRectF(pill.left() + 12, pill.top() + 10, 8, 8))
-            text_left = pill.left() + 27
-
-        painter.setPen(QPen(QColor(248, 241, 244)))
-        painter.setFont(QFont("Segoe UI", 10))
-        painter.drawText(
-            QRectF(text_left, pill.top(), pill.right() - 36 - text_left, pill.height()),
-            Qt.AlignVCenter,
-            self.status,
-        )
-        painter.setPen(Qt.NoPen)
-        # Bars stay still during transcription: there is no live input then.
-        for bar in range(3):
-            h = 4 + (0.0 if self.busy else self.level) * (11 + bar * 3)
-            painter.setBrush(QColor(255, 88, 118, 225))
-            painter.drawRoundedRect(QRectF(pill.right() - 31 + bar * 6, pill.center().y() - h / 2, 3, h), 1.5, 1.5)
+        painter.end()
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
@@ -320,6 +294,9 @@ class AirootOverlay(ListeningOverlay):
         self.completed = False
         self.pending = "hide"
         self.dismiss_shape = 1.0
+        self.last_tick = time.monotonic()
+        self.dance_phase = 0.0
+        self.morph_scale = 1.0
         self.animation_timer.setInterval(16)
         self.commands_timer.setInterval(30)
 
@@ -343,6 +320,7 @@ class AirootOverlay(ListeningOverlay):
     def begin_transcribing(self):
         if self.mode in ("gather", "transcribing"):
             return
+        self.morph_scale = 1 + GROWTH * math.sqrt(max(0.0, self.level))
         self.stop_microphone()
         self.mode = "gather"
         self.entered = time.monotonic()
@@ -400,8 +378,14 @@ class AirootOverlay(ListeningOverlay):
 
     def advance(self):
         now = time.monotonic()
-        self.frame_index = int(now / .067) % len(self.frames)
-        self.level += (self.audio_peak - self.level) * .1
+        dt = min(.1, max(0.0, now - self.last_tick))
+        self.last_tick = now
+        # Fast attack follows syllables; a softer release settles between words.
+        tau = .045 if self.audio_peak > self.level else .12
+        self.level += (self.audio_peak - self.level) * (1 - math.exp(-dt / tau))
+        if self.mode == "listening" and self.level > .015:
+            self.dance_phase += dt * 24 * math.sqrt(self.level)
+            self.frame_index = int(self.dance_phase) % len(self.frames)
         if self.mode == "gather" and now - self.entered >= self.MORPH_SECONDS:
             self.mode = "transcribing"
             if self.completed:
@@ -431,21 +415,22 @@ class AirootOverlay(ListeningOverlay):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
-        pill = QRectF(self.width() / 2 - 84, self.height() - 35, 168, 28)
-        # The sprite settles toward the existing capsule as it fades. Window
-        # geometry stays fixed so it never jumps, grows, or steals focus.
+        center_y = LOGO_TOP + LOGO_HEIGHT / 2
+        # A capsule blooms from the logo's centre while the mark folds into it.
+        # At t=0 this is exactly the last recording frame, with no pill yet.
+        pill_width = 28 + 140 * t
+        pill = QRectF((self.width() - pill_width) / 2, center_y - 14, pill_width, 28)
+        p.setOpacity(t)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(17, 18, 23, 225))
+        p.drawRoundedRect(pill, 14, 14)
         if t < 1:
             frame = self.frames[self.frame_index]
-            scale = (1 + GROWTH * math.sqrt(max(0.0, self.level))) * (1 - .75 * t)
+            scale = self.morph_scale * (1 - .75 * t)
             width, height = LOGO_WIDTH * scale, LOGO_HEIGHT * scale
-            center_y = (LOGO_TOP + LOGO_HEIGHT / 2) * (1 - t) + pill.center().y() * t
             p.setOpacity(1 - t)
             p.drawPixmap(QRectF((self.width() - width) / 2, center_y - height / 2, width, height), frame, QRectF(frame.rect()))
-        p.setOpacity(1)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(17, 18, 23, 205))
-        p.drawRoundedRect(pill, 14, 14)
-        p.setOpacity(t)
+        p.setOpacity(self.ease((t - .45) / .55))
         p.setFont(QFont("Segoe UI", 10))
         p.setPen(QColor(248, 241, 244))
         p.drawText(pill, Qt.AlignCenter, "Transcribing...")
