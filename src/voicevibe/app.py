@@ -116,7 +116,13 @@ class VoiceVibe:
         """Drive every status indicator from one place."""
         self.tray.set_state(state)
         self.overlay.set_state(state)
-        self.airoot.set_listening(self._is_listening(state))
+        self.airoot.set_state(self._airoot_state(state))
+
+    def _airoot_state(self, state: str) -> str:
+        """Map the indicator state onto what the overlay should show."""
+        if state == "busy":
+            return "busy"
+        return "listening" if self._is_listening(state) else "idle"
 
     def _is_listening(self, state: str) -> bool:
         """Whether the mic is currently taking in speech meant for the cursor.

@@ -47,6 +47,7 @@ class AirootBridge:
             self.enabled = False
 
         self._listening = False
+        self._state = "idle"
         self.device: int | None = None
         self._lock = threading.Lock()
         self._launched_at: float | None = None
@@ -68,19 +69,20 @@ class AirootBridge:
         """
         self.device = device if isinstance(device, int) else None
 
-    def set_listening(self, listening: bool) -> None:
-        """Show or hide the overlay. Repeated calls with the same value are free."""
+    def set_state(self, state: str) -> None:
+        """Drive the overlay: "listening", "busy" (transcribing), or "idle"."""
         if not self.enabled:
             return
         with self._lock:
-            if listening == self._listening:
+            if state == self._state:
                 return
-            self._listening = listening
+            self._state = state
+            self._listening = state != "idle"
         # Relaunch if someone closed it from its own menu. Skipped during startup,
         # when the probe itself could steal the port from the launching overlay.
-        if listening and not self._in_grace() and not self._reachable():
+        if state != "idle" and not self._in_grace() and not self._reachable():
             self._launch()
-        self._send(self._show_command() if listening else "hide")
+        self._send(self._command_for(state))
 
     def stop(self) -> None:
         self._stopped.set()
@@ -92,7 +94,11 @@ class AirootBridge:
             self._send("quit")
 
     # --------------------------------------------------------------- internals
-    def _show_command(self) -> str:
+    def _command_for(self, state: str) -> str:
+        if state == "idle":
+            return "hide"
+        if state == "busy":
+            return "transcribing"
         return "show" if self.device is None else f"show {self.device}"
 
     def _send(self, command: str) -> None:
@@ -143,5 +149,5 @@ class AirootBridge:
     def _resend_until_ready(self) -> None:
         while self._in_grace() and not self._stopped.wait(_RESEND_INTERVAL):
             with self._lock:
-                listening = self._listening
-            self._send(self._show_command() if listening else "hide")
+                state = self._state
+            self._send(self._command_for(state))

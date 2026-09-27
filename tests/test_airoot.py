@@ -56,42 +56,50 @@ class TestBridge(unittest.TestCase):
         # The overlay meters its own stream; without this it would use the
         # Windows default, which is the loopback we deliberately avoided.
         self.bridge.set_device(2)
-        self.bridge.set_listening(True)
+        self.bridge.set_state("listening")
         self.assertEqual(self.overlay.received(), ["show 2"])
 
     def test_show_stays_bare_when_the_system_default_is_fine(self) -> None:
         self.bridge.set_device(None)
-        self.bridge.set_listening(True)
+        self.bridge.set_state("listening")
         self.assertEqual(self.overlay.received(), ["show"])
 
     def test_a_device_name_is_not_sent_as_a_number(self) -> None:
         self.bridge.set_device("Microphone Array")
-        self.bridge.set_listening(True)
+        self.bridge.set_state("listening")
         self.assertEqual(self.overlay.received(), ["show"])
 
+    def test_transcribing_sends_the_busy_command(self) -> None:
+        # The dot in the pill marks work in progress, so transcription is a
+        # distinct state rather than just "still listening".
+        self.bridge.set_device(2)
+        self.bridge.set_state("listening")
+        self.bridge.set_state("busy")
+        self.assertEqual(self.overlay.received(), ["show 2", "transcribing"])
+
     def test_show_and_hide_send_one_packet_each(self) -> None:
-        self.bridge.set_listening(True)
-        self.bridge.set_listening(False)
+        self.bridge.set_state("listening")
+        self.bridge.set_state("idle")
         self.assertEqual(self.overlay.received(), ["show", "hide"])
 
     def test_repeated_state_is_not_resent(self) -> None:
         # A dictating session re-indicates its state on every utterance.
         for _ in range(5):
-            self.bridge.set_listening(True)
+            self.bridge.set_state("listening")
         self.assertEqual(self.overlay.received(), ["show"])
 
     def test_initial_idle_sends_nothing(self) -> None:
-        self.bridge.set_listening(False)
+        self.bridge.set_state("idle")
         self.assertEqual(self.overlay.received(), [])
 
     def test_running_overlay_is_not_relaunched(self) -> None:
         self.bridge.start()
-        self.bridge.set_listening(True)
+        self.bridge.set_state("listening")
         self.assertFalse(self.bridge._owns_process)  # noqa: SLF001
 
     def test_stop_hides_but_leaves_a_foreign_overlay_running(self) -> None:
         # The fake was running before us, so we must not tell it to quit.
-        self.bridge.set_listening(True)
+        self.bridge.set_state("listening")
         self.overlay.received()
         self.bridge.stop()
         self.assertEqual(self.overlay.received(), ["hide"])
@@ -106,7 +114,7 @@ class TestDisabled(unittest.TestCase):
     def test_missing_exe_disables_the_bridge(self) -> None:
         bridge = AirootBridge({"enabled": True, "exe": "C:/does/not/exist.exe"})
         self.assertFalse(bridge.enabled)
-        bridge.set_listening(True)  # must be a harmless no-op
+        bridge.set_state("listening")  # must be a harmless no-op
         bridge.stop()
 
     def test_off_by_default(self) -> None:
