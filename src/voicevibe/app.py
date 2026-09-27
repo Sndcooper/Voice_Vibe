@@ -20,6 +20,7 @@ from .inserter import Inserter, focused_window
 from .intent import Responder
 from .launcher import Launcher
 from .overlay import Overlay
+from .polish import apply_edit, detect_edit
 from .screen import ScreenReader
 from .speaker import Speaker, SpeechUnavailable, SystemVoice
 from .transcriber import Transcriber
@@ -108,6 +109,8 @@ class VoiceVibe:
         self._last_fired: list[dict[str, str]] = []
         # Whether the last handled utterance should send a session back to armed.
         self._ends_dictation = False
+        # Text from the previous utterance, for spoken edits like "scratch that".
+        self._last_inserted = ""
         if self.wake_enabled and not self.wake_matcher:
             log.warning("[wake].enabled is true but no phrases are set; disabling.")
             self.wake_enabled = False
@@ -362,6 +365,11 @@ class VoiceVibe:
             self._arm("submitted")
 
     def _do_insert(self, text: str, elapsed: float) -> None:
+        edit = detect_edit(text)
+        if edit is not None and self._last_inserted:
+            self._do_edit(edit, text, elapsed)
+            return
+
         reply = self.responder.respond(text)
         if reply.handled:
             self._deliver_reply(reply, text, elapsed)
@@ -370,6 +378,8 @@ class VoiceVibe:
         target = focused_window() or "unknown window"
         inserted, fired = self.inserter.insert(text)
         self._last_fired = fired
+        # Remembered so a following "scratch that" knows what to take back.
+        self._last_inserted = inserted if not fired else ""
         keys = f"  +[{' '.join(c['keys'] for c in fired)}]" if fired else ""
         if self.config.feedback.get("log_transcripts", True):
             log.info("[%.2fs] -> %s | %s%s", elapsed, target, inserted.strip(), keys)
@@ -385,6 +395,26 @@ class VoiceVibe:
         )
         self.overlay.show(inserted.strip() or " ".join(c["keys"] for c in fired))
         self._ends_dictation = any(c.get("ends_dictation", True) for c in fired)
+        self.beeper.done()
+
+    def _do_edit(self, edit: str, heard: str, elapsed: float) -> None:
+        """Rewrite the previous utterance in place, rather than appending."""
+        previous = self._last_inserted
+        replacement, spoken = apply_edit(edit, previous)
+
+        # Select the old text by backspacing over it, then type what replaces it.
+        self.inserter.erase(len(previous))
+        if replacement:
+            self.inserter.insert_literal(replacement)
+        self._last_inserted = replacement
+        self._ends_dictation = False
+
+        log.info("[%.2fs] edit %s | %r -> %r", elapsed, edit, previous, replacement)
+        self.history.add(action="edit", heard=heard.strip(), edit=edit,
+                         inserted=replacement, seconds=round(elapsed, 2))
+        self.overlay.show(spoken or edit)
+        if spoken:
+            self.voice.say(spoken)
         self.beeper.done()
 
     def _deliver_reply(self, reply, heard: str, elapsed: float) -> None:  # noqa: ANN001

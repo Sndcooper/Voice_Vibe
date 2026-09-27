@@ -20,6 +20,8 @@ from typing import Any
 import pyperclip
 from pynput.keyboard import Controller, Key
 
+from .polish import polish as polish_text
+
 log = logging.getLogger(__name__)
 
 # Modifiers we force-release before pasting. If a hotkey modifier is still held
@@ -150,6 +152,10 @@ class Inserter:
     def _finish(self, text: str, trailing_space: bool) -> str:
         if not text:
             return ""
+        if self.cfg.get("polish", True):
+            # A trailing command follows, so this is a fragment, not a sentence:
+            # terminating it would put a period before the Enter key.
+            text = polish_text(text, terminate=trailing_space)
         if self.cfg.get("lowercase"):
             text = text.lower()
         if self.cfg.get("strip_trailing_period") and text.endswith("."):
@@ -278,6 +284,28 @@ class Inserter:
                 self.keyboard.type(char)
             if delay:
                 time.sleep(delay)
+
+    def erase(self, count: int) -> None:
+        """Backspace over `count` characters already in the focused field."""
+        if count <= 0:
+            return
+        self._release_modifiers()
+        # Capped so a mishandled length cannot run away and eat a document.
+        for _ in range(min(count, 2000)):
+            self.keyboard.tap(Key.backspace)
+
+    def insert_literal(self, text: str) -> None:
+        """Put `text` in exactly as given, with no polishing or command parsing."""
+        if not text:
+            return
+        mode = str(self.cfg.get("mode", "paste")).lower()
+        try:
+            if mode == "type":
+                self._type(text)
+            else:
+                self._paste(text)
+        except Exception as exc:
+            log.error("Insertion failed (%s).", exc)
 
     def insert(self, text: str) -> tuple[str, list[dict[str, str]]]:
         """Insert the text, then fire any trailing voice commands.

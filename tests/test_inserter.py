@@ -37,7 +37,7 @@ class TestCommandExtraction(unittest.TestCase):
 
     def test_trailing_command_is_peeled_off(self) -> None:
         body, fired = self.inserter.prepare("refactor the login handler enter")
-        self.assertEqual(body, "refactor the login handler")
+        self.assertEqual(body, "Refactor the login handler")
         self.assertEqual([c["keys"] for c in fired], ["enter"])
 
     def test_bare_command_yields_no_text(self) -> None:
@@ -61,17 +61,17 @@ class TestCommandExtraction(unittest.TestCase):
 
     def test_filler_comma_before_command_is_dropped(self) -> None:
         body, _ = self.inserter.prepare("ship the release, enter")
-        self.assertEqual(body, "ship the release")
+        self.assertEqual(body, "Ship the release")
 
     def test_longest_matching_phrase_wins(self) -> None:
         body, fired = self.inserter.prepare("write the summary send it")
-        self.assertEqual(body, "write the summary")
+        self.assertEqual(body, "Write the summary")
         self.assertEqual(len(fired), 1)
         self.assertEqual(fired[0]["say"], "send it")
 
     def test_repeated_commands_all_fire(self) -> None:
         body, fired = self.inserter.prepare("done enter enter")
-        self.assertEqual(body, "done")
+        self.assertEqual(body, "Done")
         self.assertEqual(len(fired), 2)
 
     def test_disabled_voice_commands_leave_text_alone(self) -> None:
@@ -98,20 +98,47 @@ class TestTextShaping(unittest.TestCase):
     def test_replacements_apply(self) -> None:
         inserter = Inserter(dict(OUTPUT), [{"find": "new line", "replace": "\n"}], [])
         body, _ = inserter.prepare("first new line second")
-        self.assertEqual(body.strip(), "first\nsecond")
+        self.assertEqual(body.strip(), "First\nsecond.")
 
     def test_lowercase_option(self) -> None:
         body, _ = make(lowercase=True).prepare("Hello World")
-        self.assertEqual(body.strip(), "hello world")
+        self.assertEqual(body.strip(), "hello world.")
 
     def test_strip_trailing_period(self) -> None:
         body, _ = make(strip_trailing_period=True).prepare("hello world.")
-        self.assertEqual(body.strip(), "hello world")
+        self.assertEqual(body.strip(), "Hello world")
 
     def test_empty_input_stays_empty(self) -> None:
         body, fired = make().prepare("   ")
         self.assertEqual(body, "")
         self.assertEqual(fired, [])
+
+
+class TestPolish(unittest.TestCase):
+    """Polishing is what makes dictation read like typing, but it must stay
+    opt-out and must never rewrite what was actually said."""
+
+    def test_sentences_are_capitalised_and_terminated(self) -> None:
+        body, _ = make().prepare("refactor the login handler")
+        self.assertEqual(body.strip(), "Refactor the login handler.")
+
+    def test_questions_get_a_question_mark(self) -> None:
+        body, _ = make().prepare("how do i fix this")
+        self.assertEqual(body.strip(), "How do I fix this?")
+
+    def test_no_terminator_before_a_command(self) -> None:
+        # A period here would land between the text and the Enter key.
+        body, fired = make().prepare("send the report enter")
+        self.assertEqual(body, "Send the report")
+        self.assertEqual(len(fired), 1)
+
+    def test_polish_can_be_disabled(self) -> None:
+        body, _ = make(polish=False).prepare("refactor the login handler")
+        self.assertEqual(body.strip(), "refactor the login handler")
+
+    def test_ordinary_speech_is_not_rewritten(self) -> None:
+        body, _ = make().prepare("i will add a comma here and then continue")
+        self.assertIn("add a comma here", body)
 
 
 class TestKeyResolution(unittest.TestCase):

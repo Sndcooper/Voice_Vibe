@@ -65,6 +65,7 @@ DEFAULTS: dict[str, Any] = {
         "add_trailing_space": True,
         "strip_trailing_period": False,
         "lowercase": False,
+        "polish": True,
         "voice_commands": True,
         "command_delay": 0.12,
     },
