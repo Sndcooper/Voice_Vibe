@@ -31,13 +31,13 @@ def fake_sounddevice(devices: list[tuple[str, int]], default: int | None):
 
 
 class DeviceSelectionTest(unittest.TestCase):
-    def resolve(self, devices, default):  # noqa: ANN001
+    def resolve(self, devices, default, priority=None):  # noqa: ANN001
         sys.modules["sounddevice"] = fake_sounddevice(devices, default)
         for name in [n for n in sys.modules if n.startswith("voicevibe.")]:
             del sys.modules[name]
         from voicevibe.audio import default_input_device
 
-        return default_input_device()
+        return default_input_device(priority)
 
     def tearDown(self) -> None:
         sys.modules.pop("sounddevice", None)
@@ -85,6 +85,22 @@ class DeviceSelectionTest(unittest.TestCase):
 
     def test_no_input_devices_at_all(self) -> None:
         self.assertIsNone(self.resolve([("Speakers", 0)], default=None))
+
+    def test_preferred_realtek_microphone_beats_array_and_stereo_mix(self) -> None:
+        chosen = self.resolve(
+            [("Stereo Mix (Realtek(R) Audio)", 2),
+             ("Microphone Array (Realtek(R) Audio)", 2),
+             ("Microphone (Realtek(R) Audio)", 2)], default=0,
+            priority=["Microphone (Realtek(R) Audio)", "Stereo Mix"],
+        )
+        self.assertEqual(chosen, 2)
+
+    def test_explicit_stereo_mix_fallback_beats_other_microphones(self) -> None:
+        chosen = self.resolve(
+            [("Microphone Array", 2), ("Stereo Mix (Realtek(R) Audio)", 2)],
+            default=0, priority=["Microphone (Realtek(R) Audio)", "Stereo Mix"],
+        )
+        self.assertEqual(chosen, 1)
 
 
 class LoopbackNamingTest(unittest.TestCase):

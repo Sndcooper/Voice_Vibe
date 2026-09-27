@@ -331,7 +331,7 @@ def _input_devices() -> list[tuple[int, dict]]:
         return []
 
 
-def default_input_device() -> int | None:
+def default_input_device(priority: list[str] | None = None) -> int | None:
     """The device to record from when config leaves `input_device` empty.
 
     Normally the Windows default, but never a loopback: recording the speakers
@@ -346,6 +346,22 @@ def default_input_device() -> int | None:
         default = sd.default.device[0]
     except Exception:
         default = None
+
+    # Explicit preferences can include loopback inputs. Match full names first
+    # so "Microphone" never accidentally selects "Microphone Array".
+    for preferred in priority or []:
+        wanted = preferred.strip().casefold()
+        if not wanted:
+            continue
+        candidates = [(i, d) for i, d in devices
+                      if d["name"].strip().casefold() == wanted]
+        if not candidates:
+            candidates = [(i, d) for i, d in devices
+                          if wanted in d["name"].casefold() and not _is_alias(d["name"])]
+        if candidates:
+            chosen, dev = min(candidates, key=lambda entry: (entry[0] != default, entry[0]))
+            log.info("Preferred input [%d] %s.", chosen, dev["name"])
+            return chosen
 
     names = dict(devices)
     if default is not None and default in names and not is_loopback(names[default]["name"]):

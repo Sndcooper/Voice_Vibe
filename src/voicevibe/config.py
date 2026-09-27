@@ -57,6 +57,7 @@ DEFAULTS: dict[str, Any] = {
     "audio": {
         "sample_rate": 16000,
         "input_device": "",
+        "input_priority": [],
         "min_duration": 0.25,
         "max_duration": 300.0,
     },
@@ -167,7 +168,9 @@ class Config:
         if "_resolved" not in self._device_cache:
             from .audio import default_input_device
 
-            self._device_cache["_resolved"] = default_input_device()
+            self._device_cache["_resolved"] = default_input_device(
+                self.audio.get("input_priority", [])
+            )
         return self._device_cache["_resolved"]
 
 
