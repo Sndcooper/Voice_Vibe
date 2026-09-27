@@ -126,7 +126,24 @@ def check(config: Config) -> int:
         version = getattr(ctranslate2, "__version__", "unknown")
         print(f"  ctranslate2 {version}")
         if count:
-            print(f"  cuda        {count} device(s) -- GPU mode available")
+            # A CUDA device being visible is not the same as GPU inference
+            # working: ctranslate2 loads a model onto the GPU happily and only
+            # fails on the first compute when cuBLAS/cuDNN are missing.
+            try:
+                import numpy as np
+                from faster_whisper import WhisperModel
+
+                probe = WhisperModel("tiny.en", device="cuda", compute_type="float16")
+                segments, _ = probe.transcribe(
+                    np.zeros(16000, dtype=np.float32), vad_filter=False
+                )
+                list(segments)
+                print(f"  cuda        {count} device(s) -- GPU inference works")
+            except Exception as exc:
+                ok = False
+                print(f"  cuda        {count} device(s) visible, but inference FAILED")
+                print(f"              {str(exc)[:70]}")
+                print('              Fix with:  uv pip install -e ".[cuda]"')
         else:
             print("  cuda        none -- CPU mode (supported)")
     except Exception as exc:

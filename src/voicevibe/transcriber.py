@@ -78,7 +78,11 @@ def recommend_tier() -> Tier:
     """
     if cuda_available():
         return Tier("large-v3-turbo", "float16", "GPU available")
+    return recommend_tier_for_cpu()
 
+
+def recommend_tier_for_cpu() -> Tier:
+    """The best model for this machine's CPU, ignoring any GPU."""
     total, _ = memory_gb()
     cores = os.cpu_count() or 2
 
@@ -162,13 +166,39 @@ class Transcriber:
         self.initial_prompt: str | None = str(model_cfg.get("initial_prompt") or "") or None
 
     def warmup(self, sample_rate: int = 16000) -> None:
-        """Run one tiny inference so the first real dictation is not slow."""
+        """Run one tiny inference so the first real dictation is not slow.
+
+        This is also the only place a broken GPU install surfaces. Loading a
+        model onto CUDA succeeds even when the cuBLAS/cuDNN runtime is missing;
+        it only fails on the first actual compute. Left unhandled that turns
+        every dictation into a silent failure, so a GPU warmup that fails
+        rebuilds the model on CPU rather than being swallowed.
+        """
         silence = np.zeros(sample_rate, dtype=np.float32)
         try:
             segments, _ = self.model.transcribe(silence, beam_size=1, vad_filter=False)
             list(segments)
-        except Exception as exc:  # pragma: no cover - warmup is best effort
-            log.debug("warmup failed: %s", exc)
+            return
+        except Exception as exc:
+            if self.device != "cuda":
+                log.warning("Warmup failed: %s", exc)
+                return
+            log.error(
+                "GPU inference is not usable (%s). The CUDA runtime is probably "
+                'missing -- install it with:  uv pip install -e ".[cuda]"  '
+                "Falling back to CPU for now.",
+                exc,
+            )
+
+        from faster_whisper import WhisperModel
+
+        fallback = recommend_tier_for_cpu()
+        self.device, self.compute_type = "cpu", fallback.compute
+        self.model_name = MODEL_ALIASES.get(fallback.model, fallback.model)
+        self.model = WhisperModel(
+            self.model_name, device="cpu", compute_type=self.compute_type
+        )
+        log.warning("Now running %s on CPU (%s).", self.model_name, self.compute_type)
 
     def transcribe(self, audio: np.ndarray) -> str:
         language = self.cfg.get("language", "en")
