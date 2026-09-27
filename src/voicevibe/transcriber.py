@@ -204,7 +204,15 @@ class Transcriber:
         language = self.cfg.get("language", "en")
         if isinstance(language, str) and language.lower() in ("", "auto", "none"):
             language = None
-        prompt = self.initial_prompt
+
+        # Whisper does not return "nothing" for silence: it emits whatever its
+        # prior makes likely, which is why near-silent clips come back as stray
+        # words. Refuse to decode audio with no speech-level energy in it.
+        if audio.size:
+            peak = float(np.abs(audio).max())
+            if peak < float(self.cfg.get("silence_peak", 0.02) or 0):
+                log.debug("Skipped a near-silent clip (peak %.4f).", peak)
+                return ""
 
         segments, _info = self.model.transcribe(
             audio,
@@ -212,6 +220,24 @@ class Transcriber:
             beam_size=int(self.cfg.get("beam_size", 1) or 1),
             vad_filter=bool(self.cfg.get("vad_filter", True)),
             condition_on_previous_text=False,
-            initial_prompt=prompt,
+            initial_prompt=self.initial_prompt,
+            # Whisper reports how confident it is and how much of a window it
+            # thinks is silence. Both are needed to throw hallucinations away.
+            no_speech_threshold=float(self.cfg.get("no_speech_threshold", 0.6)),
+            log_prob_threshold=float(self.cfg.get("log_prob_threshold", -1.0)),
         )
-        return "".join(segment.text for segment in segments).strip()
+
+        kept = []
+        confidence = float(self.cfg.get("no_speech_threshold", 0.6))
+        for segment in segments:
+            # A segment the model itself rates as probably-silence is exactly
+            # the hallucination case, whatever words it put in it.
+            if getattr(segment, "no_speech_prob", 0.0) > confidence:
+                log.debug(
+                    "Dropped %r (no_speech_prob %.2f).",
+                    segment.text.strip(),
+                    segment.no_speech_prob,
+                )
+                continue
+            kept.append(segment.text)
+        return "".join(kept).strip()

@@ -20,7 +20,7 @@ from typing import Any
 import pyperclip
 from pynput.keyboard import Controller, Key
 
-from .polish import polish as polish_text
+from .polish import format_list, polish as polish_text
 
 log = logging.getLogger(__name__)
 
@@ -153,9 +153,17 @@ class Inserter:
         if not text:
             return ""
         if self.cfg.get("polish", True):
-            # A trailing command follows, so this is a fragment, not a sentence:
-            # terminating it would put a period before the Enter key.
-            text = polish_text(text, terminate=trailing_space)
+            listed = (
+                format_list(text, str(self.cfg.get("bullet", "-")))
+                if self.cfg.get("format_lists", True)
+                else None
+            )
+            if listed:
+                text = listed
+            else:
+                # A trailing command follows, so this is a fragment, not a
+                # sentence: terminating it would put a period before Enter.
+                text = polish_text(text, terminate=trailing_space)
         if self.cfg.get("lowercase"):
             text = text.lower()
         if self.cfg.get("strip_trailing_period") and text.endswith("."):

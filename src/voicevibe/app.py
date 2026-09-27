@@ -231,6 +231,7 @@ class VoiceVibe:
             return
 
         self._wake_state = ARMED
+        self._set_wake_bias(True)
         self._last_activity = time.monotonic()
         self.beeper.session_start()
         key = self.config.hotkeys.get("session", "the session key")
@@ -258,6 +259,7 @@ class VoiceVibe:
         if self._wake_state == ARMED:
             return
         self._wake_state = ARMED
+        self._set_wake_bias(True)
         log.info("Armed again (%s). Say %s to dictate.", reason, self._phrase_hint())
         self.beeper.sleep()
         self._indicate(self._session_tray())
@@ -307,16 +309,21 @@ class VoiceVibe:
             if job is None:
                 return
             audio, action = job
+            visible_job = not (action == SESSION and self.wake_enabled and self._wake_state == ARMED)
             try:
-                if not (action == SESSION and self.wake_enabled and self._wake_state == ARMED):
+                if visible_job:
                     self._indicate("busy")
                 started = time.perf_counter()
                 text = self.transcriber.transcribe(audio) if self.transcriber else ""
                 elapsed = time.perf_counter() - started
                 if not text:
+                    if visible_job:
+                        self.airoot.show_transcript("No speech recognized", "Try again")
                     log.info("Nothing recognised (%.2fs).", elapsed)
                     self.beeper.empty()
                     continue
+                if visible_job:
+                    self.airoot.show_transcript(text)
                 if action == SPEAK:
                     self._do_speak(text, elapsed)
                 elif action == SESSION:
@@ -324,6 +331,8 @@ class VoiceVibe:
                 else:
                     self._do_insert(text, elapsed)
             except Exception:
+                if visible_job:
+                    self.airoot.show_transcript("Please try again", "Couldn't transcribe")
                 log.exception("Job failed")
                 self.beeper.error()
             finally:
@@ -343,6 +352,7 @@ class VoiceVibe:
                     log.info("(armed, ignored) %s", text.strip())
                 return
             self._wake_state = DICTATING
+            self._set_wake_bias(False)
             self._last_activity = time.monotonic()
             self.beeper.wake()
             self._indicate("session")
@@ -490,9 +500,22 @@ class VoiceVibe:
         log.debug("Decoder prompt biased with: %s", hint)
         return f"{existing} {hint}".strip() if existing else hint
 
+    def _set_wake_bias(self, armed: bool) -> None:
+        """Bias the decoder toward the wake phrase only while listening for it.
+
+        The bias is what makes a short wake word survive Whisper, but it also
+        makes the model emit that phrase when it has nothing to transcribe --
+        silence came back as "Computer." during ordinary dictation. So it is
+        applied while armed and removed the moment real dictation starts.
+        """
+        if self.transcriber is None:
+            return
+        plain = str(self.config.model.get("initial_prompt") or "").strip() or None
+        self.transcriber.initial_prompt = self._wake_biased_prompt() if armed else plain
+
     def run(self) -> int:
         self.transcriber = Transcriber(self.config.model)
-        self.transcriber.initial_prompt = self._wake_biased_prompt()
+        self._set_wake_bias(False)
         self.transcriber.warmup(int(self.config.audio["sample_rate"]))
 
         if self.config.speech.get("preload") and self.config.hotkeys.get("speak"):

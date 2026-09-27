@@ -13,7 +13,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from voicevibe.polish import apply_edit, detect_edit, polish  # noqa: E402
+from voicevibe.polish import (  # noqa: E402
+    apply_edit,
+    detect_edit,
+    format_list,
+    polish,
+)
 
 
 class TestCapitalisation(unittest.TestCase):
@@ -87,6 +92,54 @@ class TestSpacing(unittest.TestCase):
 
     def test_runs_of_spaces_collapse(self) -> None:
         self.assertEqual(polish("too    many   spaces"), "Too many spaces.")
+
+
+class TestLists(unittest.TestCase):
+    """Dictated enumerations become real lines. The danger is the opposite
+    case: ordinals and "point" are common in ordinary speech, and turning a
+    sentence into a list mangles it."""
+
+    def test_explicit_numbering(self) -> None:
+        self.assertEqual(
+            format_list("point one install deps point two run tests"),
+            "1. Install deps.\n2. Run tests.",
+        )
+
+    def test_ordinals_are_numbered(self) -> None:
+        self.assertEqual(
+            format_list("first open the file second edit it"),
+            "1. Open the file.\n2. Edit it.",
+        )
+
+    def test_bullet_cue(self) -> None:
+        self.assertEqual(format_list("bullet milk bullet eggs"), "- Milk.\n- Eggs.")
+
+    def test_lead_in_gets_a_colon(self) -> None:
+        result = format_list("the plan is number one refactor number two test")
+        self.assertTrue(result.startswith("The plan is:\n1."))
+
+    def test_one_marker_is_not_a_list(self) -> None:
+        # A single "first" is a turn of phrase.
+        self.assertIsNone(format_list("first i need to check the logs"))
+
+    def test_ordinals_in_ordinary_speech(self) -> None:
+        for text in (
+            "i went to the first shop and it was closed",
+            "first of all i think we should wait",
+            "my first attempt failed and the second one worked",
+            "this is the third time today",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(format_list(text))
+
+    def test_point_in_ordinary_speech(self) -> None:
+        self.assertIsNone(format_list("point taken but we should move on"))
+
+    def test_out_of_order_numbers_are_not_a_list(self) -> None:
+        self.assertIsNone(format_list("number one thing number five other"))
+
+    def test_plain_sentence(self) -> None:
+        self.assertIsNone(format_list("just a normal sentence with no list"))
 
 
 class TestEditDetection(unittest.TestCase):

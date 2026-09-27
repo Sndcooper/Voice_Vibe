@@ -197,3 +197,90 @@ def apply_edit(name: str, previous: str) -> tuple[str, str]:
     if name == "lower":
         return previous.lower(), "Lower case."
     return previous, ""
+
+
+# ----------------------------------------------------------------- lists
+# Spoken enumerations. People dictate lists as one breath -- "first do this,
+# second do that" -- and expect real lines back.
+_ORDINAL_WORDS = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+    "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+}
+_NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
+
+# "point two", "number three", "step four" -- an explicit marker, so the item
+# number is taken from it rather than guessed.
+_NUMBERED = re.compile(
+    r"(?:^|[\s,;.])(?:point|number|step|item)\s+"
+    r"(\d+|" + "|".join(_NUMBER_WORDS) + r")\b[\s,.:;-]*",
+    re.IGNORECASE,
+)
+
+# Bare ordinals only count when they open the phrase: "first, do this".
+# Bare ordinals are spoken with or without a pause ("first, do this" and
+# "first do this"), so the separator is optional. The guard against ordinary
+# speech is instead that the ordinal must not be preceded by an article or
+# preposition -- "the first shop", "of all" -- and that a list needs two of them.
+_ORDINAL = re.compile(
+    r"(?:^|[\s,;.]+)"
+    r"(?<!the )(?<!a )(?<!of )(?<!my )(?<!our )(?<!their )(?<!its )(?<!his )"
+    r"(" + "|".join(_ORDINAL_WORDS) + r")(?:ly)?\b(?!\s+of\b)[\s,:-]+",
+    re.IGNORECASE,
+)
+
+_BULLET_CUE = re.compile(r"(?:^|[\s,;.])(?:bullet|dash|next item)\b[\s,.:;-]*", re.I)
+
+
+def _split_items(text: str, pattern: re.Pattern, numbered: bool):
+    """Cut `text` at each marker. Returns None when there is no real list."""
+    marks = list(pattern.finditer(text))
+    if len(marks) < 2:  # one marker is a turn of phrase, not a list
+        return None
+
+    lead = text[: marks[0].start()].strip(" ,;:-")
+    items = []
+    for index, mark in enumerate(marks):
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
+        body = text[mark.end() : end].strip(" ,;:-")
+        if not body:
+            return None
+        number = None
+        if numbered:
+            token = mark.group(1).lower()
+            number = (
+                int(token) if token.isdigit()
+                else _NUMBER_WORDS.get(token) or _ORDINAL_WORDS.get(token)
+            )
+        items.append((number, body))
+
+    # Items must run in order, or the words were not markers at all.
+    if numbered:
+        seen = [n for n, _ in items if n]
+        if seen != list(range(seen[0], seen[0] + len(seen))):
+            return None
+    return lead, items
+
+
+def format_list(text: str, bullet: str = "-") -> str | None:
+    """Rewrite a dictated enumeration as real lines, or None if it is not one."""
+    for pattern, numbered in ((_NUMBERED, True), (_ORDINAL, True), (_BULLET_CUE, False)):
+        split = _split_items(text, pattern, numbered)
+        if not split:
+            continue
+        lead, items = split
+        lines = []
+        for position, (number, body) in enumerate(items, start=1):
+            marker = f"{number or position}." if numbered else bullet
+            lines.append(f"{marker} {_capitalise(_terminate(body.strip()))}")
+        block = "\n".join(lines)
+        if lead:
+            # A lead-in introduces the list rather than ending a thought, so it
+            # takes a colon instead of the full stop _terminate would add.
+            if lead[-1] not in ".!?:":
+                lead += ":"
+            block = f"{_capitalise(lead)}\n{block}"
+        return block
+    return None

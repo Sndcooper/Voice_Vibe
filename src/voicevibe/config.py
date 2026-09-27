@@ -49,6 +49,9 @@ DEFAULTS: dict[str, Any] = {
         "language": "en",
         "beam_size": 1,
         "vad_filter": True,
+        "silence_peak": 0.02,
+        "no_speech_threshold": 0.6,
+        "log_prob_threshold": -1.0,
         "initial_prompt": "",
     },
     "audio": {
@@ -66,6 +69,8 @@ DEFAULTS: dict[str, Any] = {
         "strip_trailing_period": False,
         "lowercase": False,
         "polish": True,
+        "format_lists": True,
+        "bullet": "-",
         "voice_commands": True,
         "command_delay": 0.12,
     },

@@ -14,6 +14,7 @@ never interrupt dictation, so failures are logged once and otherwise ignored.
 from __future__ import annotations
 
 import logging
+import json
 import socket
 import subprocess
 import sys
@@ -93,6 +94,12 @@ class AirootBridge:
         if self._owns_process and self.quit_on_exit:
             self._send("quit")
 
+    def show_transcript(self, text: str, label: str = "Recognized") -> None:
+        """Send recognized text as Unicode without changing the recording state."""
+        if self.enabled:
+            self._send(json.dumps({"event": "transcript", "text": text[:4000],
+                                   "label": label}, ensure_ascii=False))
+
     # --------------------------------------------------------------- internals
     def _command_for(self, state: str) -> str:
         if state == "idle":
@@ -104,7 +111,7 @@ class AirootBridge:
     def _send(self, command: str) -> None:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                sock.sendto(command.encode("ascii"), ("127.0.0.1", self.port))
+                sock.sendto(command.encode("utf-8"), ("127.0.0.1", self.port))
         except OSError as exc:
             log.debug("airoot %s failed: %s", command, exc)
 

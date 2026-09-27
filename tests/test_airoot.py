@@ -7,6 +7,7 @@ port, the bridge treats the overlay as running and never tries to launch it.
 from __future__ import annotations
 
 import socket
+import json
 import sys
 import tempfile
 import unittest
@@ -31,7 +32,7 @@ class FakeOverlay:
                 data, _ = self.sock.recvfrom(256)
             except (socket.timeout, OSError):
                 return out
-            out.append(data.decode("ascii"))
+            out.append(data.decode("utf-8"))
 
     def close(self) -> None:
         self.sock.close()
@@ -91,6 +92,12 @@ class TestBridge(unittest.TestCase):
     def test_initial_idle_sends_nothing(self) -> None:
         self.bridge.set_state("idle")
         self.assertEqual(self.overlay.received(), [])
+
+    def test_unicode_transcript_is_preserved(self) -> None:
+        self.bridge.show_transcript("Hello नमस्ते 👋")
+        message = json.loads(self.overlay.received()[0])
+        self.assertEqual(message["text"], "Hello नमस्ते 👋")
+        self.assertEqual(message["event"], "transcript")
 
     def test_running_overlay_is_not_relaunched(self) -> None:
         self.bridge.start()
