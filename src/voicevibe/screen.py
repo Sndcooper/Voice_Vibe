@@ -39,7 +39,35 @@ def _user32():  # noqa: ANN201
     user32.GetDC.restype = wintypes.HDC
     user32.GetDC.argtypes = [wintypes.HWND]
     user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
     return user32
+
+
+def _gdi32():  # noqa: ANN201
+    """gdi32 with its handle types declared.
+
+    Every one of these takes or returns a HANDLE. Without argtypes ctypes
+    assumes int, and a real 64-bit handle then raises "int too long to
+    convert" -- which is a crash, not a graceful failure.
+    """
+    gdi32 = ctypes.windll.gdi32
+    gdi32.CreateCompatibleDC.restype = wintypes.HDC
+    gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+    gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+    gdi32.SelectObject.restype = wintypes.HGDIOBJ
+    gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    gdi32.DeleteDC.argtypes = [wintypes.HDC]
+    gdi32.BitBlt.argtypes = [
+        wintypes.HDC, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.DWORD,
+    ]
+    gdi32.GetDIBits.argtypes = [
+        wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
+        ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT,
+    ]
+    return gdi32
 
 
 class _BitmapInfoHeader(ctypes.Structure):
@@ -188,7 +216,7 @@ def capture_window(hwnd=None):  # noqa: ANN001, ANN201
         return None
 
     user32 = _user32()
-    gdi32 = ctypes.windll.gdi32
+    gdi32 = _gdi32()
     hwnd = hwnd or user32.GetForegroundWindow()
     if not hwnd:
         return None
