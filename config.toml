@@ -47,15 +47,12 @@ compute_type = "auto"
 cpu_threads = 0
 # ISO-639-1 code, or "auto" to detect every time (slower, less reliable).
 language = "en"
-beam_size = 1
-# Silero VAD trims silence before transcription. Big accuracy win for short clips.
-vad_filter = true
-# Whisper never returns "nothing" for silence -- it emits whatever its prior
-# makes likely, which is how a quiet room became "Computer." Clips whose peak
-# is below silence_peak are not decoded at all, and any segment the model
-# itself rates as probably-silence above no_speech_threshold is discarded.
-silence_peak = 0.02
-no_speech_threshold = 0.6
+# Same model and precision; a small beam considers more word candidates.
+# This may take slightly longer than greedy decoding (beam_size = 1).
+beam_size = 3
+# Raw fidelity: decode quiet speech without amplitude or no-speech gates.
+# VAD is opt-in: it can trim silence, but may also miss soft speech.
+vad_filter = false
 log_prob_threshold = -1.0
 # Bias the decoder toward your vocabulary. Keep it short.
 initial_prompt = ""
@@ -85,20 +82,11 @@ type_delay = 0.004
 add_trailing_space = true
 strip_trailing_period = false
 lowercase = false
-# Capitalise sentences, add a closing full stop or question mark, tidy spacing,
-# and turn dictated punctuation at the end of an utterance into real marks
-# ("wrap it up, full stop"). Plain pattern matching, so it costs nothing and
-# never rewrites the middle of a sentence. Set false for the raw transcript.
+# Basic polish only: capitalisation, spacing, and sentence punctuation.
+# No automatic lists, word replacements, spoken edits, or assistant actions.
+raw_dictation = false
 polish = true
-
-# Turn a dictated enumeration into real lines: "point one ... point two ..."
-# or "first ... second ..." become a numbered list, "bullet ... bullet ..."
-# a bulleted one. Needs at least two markers in order, so ordinary speech
-# ("the first shop", "point taken") is left alone.
-format_lists = true
-bullet = "-"
-
-# Honour the [[commands]] table below.
+# Only a whole utterance of "press enter" sends Enter. Sentence mentions stay text.
 voice_commands = true
 # Pause between pasting the text and pressing the command key, in seconds.
 # Raise it if a chat box submits before your text lands.
@@ -178,136 +166,6 @@ sounds = true
 tray_icon = true
 log_transcripts = true
 
-# Literal find-and-replace applied after transcription, in order.
-# Useful for voice commands and for words Whisper keeps getting wrong.
-[[replacements]]
-find = "new line"
-replace = "\n"
-
-[[replacements]]
-find = "new paragraph"
-replace = "\n\n"
-
-# Trailing voice commands. If a dictation *ends* with one of these phrases, the
-# phrase is removed from the text and the keys are pressed instead. Matching is
-# word-boundary aware, so "enter" submits but "re-enter your password" does not.
-# Say just the phrase on its own to fire the key with no text.
-[[commands]]
-say = "enter"
-keys = "enter"
-
-[[commands]]
-say = "send it"
-keys = "enter"
-
-[[commands]]
-say = "submit"
-keys = "enter"
-
-[[commands]]
-say = "next field"
-keys = "tab"
-ends_dictation = false
-
-[[commands]]
-say = "go back"
-keys = "shift+tab"
-ends_dictation = false
-
-[[commands]]
-say = "never mind that"
-keys = "esc"
-
-[[commands]]
-say = "select all"
-keys = "ctrl+a"
-ends_dictation = false
-
-[[commands]]
-say = "copy that"
-keys = "ctrl+c"
-ends_dictation = false
-
-[[commands]]
-say = "paste that"
-keys = "ctrl+v"
-ends_dictation = false
-
-[[commands]]
-say = "cut that"
-keys = "ctrl+x"
-ends_dictation = false
-
-[[commands]]
-say = "undo that"
-keys = "ctrl+z"
-ends_dictation = false
-
-[[commands]]
-say = "redo that"
-keys = "ctrl+y"
-ends_dictation = false
-
-[[commands]]
-say = "save it"
-keys = "ctrl+s"
-
-[[commands]]
-say = "find it"
-keys = "ctrl+f"
-ends_dictation = false
-
-[[commands]]
-say = "close tab"
-keys = "ctrl+w"
-
-[[commands]]
-say = "switch window"
-keys = "alt+tab"
-
-[[commands]]
-say = "scroll down"
-keys = "page_down"
-ends_dictation = false
-
-[[commands]]
-say = "scroll up"
-keys = "page_up"
-ends_dictation = false
-
-[[commands]]
-say = "go to the top"
-keys = "ctrl+home"
-ends_dictation = false
-
-[[commands]]
-say = "go to the end"
-keys = "ctrl+end"
-ends_dictation = false
-
-# Some chat boxes use Ctrl+Enter to send and plain Enter for a newline.
-# [[commands]]
-# say = "send message"
-# keys = "ctrl+enter"
-
-# Apps you can open by voice: say "open blender", "launch chrome".
-#
-# Start Menu shortcuts and stock Windows tools are found automatically, so this
-# table is only needed for apps that are not in the Start Menu, or to add a
-# shorthand the matcher does not guess ("vs code" is a common one).
-#
-# SECURITY: what you say only ever *selects* a row from this allowlist plus the
-# discovered shortcuts. A spoken name is never turned into a path or run through
-# a shell, and a name that matches nothing is refused out loud.
-#
-# [[apps]]
-# say = "vs code"
-# path = "C:/Users/you/AppData/Local/Programs/Microsoft VS Code/Code.exe"
-
-# [[apps]]
-# say = "blender"
-# path = "C:/Program Files/Blender Foundation/Blender 4.2/blender.exe"
-
 # The floating status orb: a frameless, click-through circle pinned above every
 # other window. It is not a window you can move or close; it shows state and the
 # last thing that happened, then fades back to a dot.
@@ -334,13 +192,13 @@ keep_days = 30
 # Replies. There is no language model here: answers are matched and extracted,
 # never generated, so this costs no extra memory and cannot invent an answer.
 [assistant]
-enabled = true
+enabled = false
 # "open <app>" launches from the allowlist above.
 launch_apps = true
 # "what's on my screen", "what is this error", "read this", "where am I".
 answer_screen = true
 # Index Start Menu shortcuts at startup so most apps work without [[apps]] rows.
-discover_apps = true
+discover_apps = false
 # How close a spoken name must be to an app name, 0 to 1. Lower matches more
 # loosely and risks opening the wrong thing.
 match_threshold = 0.78

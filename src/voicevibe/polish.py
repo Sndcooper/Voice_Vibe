@@ -142,11 +142,12 @@ def _terminate(text: str) -> str:
     return text + ("?" if opener in _QUESTION_OPENERS else ".")
 
 
-def polish(text: str, terminate: bool = True) -> str:
+def polish(text: str, terminate: bool = True, spoken_marks: bool = True) -> str:
     """Clean up one utterance. Safe to call on text that needs nothing."""
     if not text or not text.strip():
         return ""
-    text = _apply_spoken_marks(text)
+    if spoken_marks:
+        text = _apply_spoken_marks(text)
     text = _fix_spacing(text)
     text = _capitalise(text)
     if terminate:

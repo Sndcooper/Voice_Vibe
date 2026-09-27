@@ -22,10 +22,14 @@
 
 Voice Vibe turns your microphone into a system-wide input method. Click any text field—an AI chat, browser, code editor, terminal, Notepad, or search box—then speak. Transcription runs locally through Whisper and the result appears at the focused cursor.
 
+Dictation now uses basic polishing: capitalisation, spacing, and sentence punctuation. Automatic lists, word replacements, spoken edits, and assistant actions are disabled in the dictation path. The only voice key command is **press enter**, spoken as a separate utterance; mentions inside sentences remain text. Set `output.polish = false` to disable polishing, or `raw_dictation = true` for literal output with no commands. The model and precision stay the same; beam size 3 and deterministic decoding replace greedy decoding and random fallback. This can add processing time. VAD remains opt-in, and quiet speech is not discarded by amplitude gates.
+
+The feature descriptions below for legacy commands, lists, and assistant actions describe earlier behavior; they are not active in the simplified dictation flow.
+
 It supports three workflows:
 
 - **Ctrl+Alt+Space — one-shot dictation:** tap once to record, tap again to transcribe and paste.
-- **Ctrl+Alt+W — wake-word session:** leave the session armed, say **“hey computer”**, dictate, then say **“enter”** to paste, submit, and re-arm.
+- **Ctrl+Alt+W - wake-word session:** leave the session armed, say **hey computer**, dictate, then pause to paste. Say **press enter** as a separate utterance to submit and re-arm.
 - **Ctrl+Alt+Shift+Space — speech output:** record speech, transcribe it, and read the result aloud with Soprano TTS.
 
 > [!IMPORTANT]

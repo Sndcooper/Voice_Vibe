@@ -205,39 +205,23 @@ class Transcriber:
         if isinstance(language, str) and language.lower() in ("", "auto", "none"):
             language = None
 
-        # Whisper does not return "nothing" for silence: it emits whatever its
-        # prior makes likely, which is why near-silent clips come back as stray
-        # words. Refuse to decode audio with no speech-level energy in it.
-        if audio.size:
-            peak = float(np.abs(audio).max())
-            if peak < float(self.cfg.get("silence_peak", 0.02) or 0):
-                log.debug("Skipped a near-silent clip (peak %.4f).", peak)
-                return ""
+        # Only an empty buffer can be skipped safely without decoding it.
+        # Amplitude is not evidence that a recording contains no speech.
+        if not audio.size:
+            return ""
 
         segments, _info = self.model.transcribe(
             audio,
             language=language,
-            beam_size=int(self.cfg.get("beam_size", 1) or 1),
-            vad_filter=bool(self.cfg.get("vad_filter", True)),
+            beam_size=int(self.cfg.get("beam_size", 3) or 3),
+            vad_filter=bool(self.cfg.get("vad_filter", False)),
+            # Deterministic decoding: avoid random high-temperature retries.
+            temperature=0.0,
             condition_on_previous_text=False,
             initial_prompt=self.initial_prompt,
-            # Whisper reports how confident it is and how much of a window it
-            # thinks is silence. Both are needed to throw hallucinations away.
-            no_speech_threshold=float(self.cfg.get("no_speech_threshold", 0.6)),
+            # Disable silence-based skipping by default. The log-probability
+            # threshold still controls decoder fallback, not a post-decode drop.
+            no_speech_threshold=self.cfg.get("no_speech_threshold"),
             log_prob_threshold=float(self.cfg.get("log_prob_threshold", -1.0)),
         )
-
-        kept = []
-        confidence = float(self.cfg.get("no_speech_threshold", 0.6))
-        for segment in segments:
-            # A segment the model itself rates as probably-silence is exactly
-            # the hallucination case, whatever words it put in it.
-            if getattr(segment, "no_speech_prob", 0.0) > confidence:
-                log.debug(
-                    "Dropped %r (no_speech_prob %.2f).",
-                    segment.text.strip(),
-                    segment.no_speech_prob,
-                )
-                continue
-            kept.append(segment.text)
-        return "".join(kept).strip()
+        return "".join(segment.text for segment in segments).strip()

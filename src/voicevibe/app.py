@@ -20,7 +20,6 @@ from .inserter import Inserter, focused_window
 from .intent import Responder
 from .launcher import Launcher
 from .overlay import Overlay
-from .polish import apply_edit, detect_edit
 from .screen import ScreenReader
 from .speaker import Speaker, SpeechUnavailable, SystemVoice
 from .transcriber import Transcriber
@@ -177,7 +176,8 @@ class VoiceVibe:
             return
 
         peak = float(np.abs(audio).max()) if audio.size else 0.0
-        if peak < 1e-5:
+        # Only digital silence is a device failure; quiet speech must be decoded.
+        if not audio.size or not np.any(audio):
             log.warning(
                 "Microphone returned pure silence. Check Windows mic privacy "
                 "(Settings > Privacy > Microphone), that the device is unmuted, "
@@ -375,16 +375,6 @@ class VoiceVibe:
             self._arm("submitted")
 
     def _do_insert(self, text: str, elapsed: float) -> None:
-        edit = detect_edit(text)
-        if edit is not None and self._last_inserted:
-            self._do_edit(edit, text, elapsed)
-            return
-
-        reply = self.responder.respond(text)
-        if reply.handled:
-            self._deliver_reply(reply, text, elapsed)
-            return
-
         target = focused_window() or "unknown window"
         inserted, fired = self.inserter.insert(text)
         self._last_fired = fired
@@ -405,43 +395,6 @@ class VoiceVibe:
         )
         self.overlay.show(inserted.strip() or " ".join(c["keys"] for c in fired))
         self._ends_dictation = any(c.get("ends_dictation", True) for c in fired)
-        self.beeper.done()
-
-    def _do_edit(self, edit: str, heard: str, elapsed: float) -> None:
-        """Rewrite the previous utterance in place, rather than appending."""
-        previous = self._last_inserted
-        replacement, spoken = apply_edit(edit, previous)
-
-        # Select the old text by backspacing over it, then type what replaces it.
-        self.inserter.erase(len(previous))
-        if replacement:
-            self.inserter.insert_literal(replacement)
-        self._last_inserted = replacement
-        self._ends_dictation = False
-
-        log.info("[%.2fs] edit %s | %r -> %r", elapsed, edit, previous, replacement)
-        self.history.add(action="edit", heard=heard.strip(), edit=edit,
-                         inserted=replacement, seconds=round(elapsed, 2))
-        self.overlay.show(spoken or edit)
-        if spoken:
-            self.voice.say(spoken)
-        self.beeper.done()
-
-    def _deliver_reply(self, reply, heard: str, elapsed: float) -> None:  # noqa: ANN001
-        """An utterance the responder handled: nothing is typed, something is said."""
-        self._last_fired = []
-        # A completed request ends the turn, so a wake session goes back to armed.
-        self._ends_dictation = True
-        log.info("[%.2fs] %s | %s", elapsed, reply.action, reply.speak)
-        self.history.add(
-            action=reply.action,
-            heard=heard.strip(),
-            reply=reply.speak,
-            seconds=round(elapsed, 2),
-        )
-        self.overlay.show(reply.caption or reply.speak)
-        if reply.speak:
-            self.voice.say(reply.speak)
         self.beeper.done()
 
     def _do_speak(self, text: str, elapsed: float) -> None:

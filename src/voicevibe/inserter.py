@@ -20,7 +20,7 @@ from typing import Any
 import pyperclip
 from pynput.keyboard import Controller, Key
 
-from .polish import format_list, polish as polish_text
+from .polish import polish as polish_text
 
 log = logging.getLogger(__name__)
 
@@ -139,31 +139,14 @@ class Inserter:
         self.keyboard = Controller()
 
     def _normalize(self, text: str) -> str:
-        text = text.strip()
-        if not text:
-            return ""
-        for rule in self.replacements:
-            text = text.replace(rule["find"], rule["replace"])
-        if "\n" in text:
-            # "new line" sits between spaces in speech; drop them around breaks.
-            text = re.sub(r"[ \t]*\n[ \t]*", "\n", text).strip()
-        return text
+        # Keep dictated words literal; legacy replacement tables are ignored.
+        return text.strip()
 
     def _finish(self, text: str, trailing_space: bool) -> str:
         if not text:
             return ""
         if self.cfg.get("polish", True):
-            listed = (
-                format_list(text, str(self.cfg.get("bullet", "-")))
-                if self.cfg.get("format_lists", True)
-                else None
-            )
-            if listed:
-                text = listed
-            else:
-                # A trailing command follows, so this is a fragment, not a
-                # sentence: terminating it would put a period before Enter.
-                text = polish_text(text, terminate=trailing_space)
+            text = polish_text(text, terminate=trailing_space, spoken_marks=False)
         if self.cfg.get("lowercase"):
             text = text.lower()
         if self.cfg.get("strip_trailing_period") and text.endswith("."):
@@ -175,44 +158,22 @@ class Inserter:
 
     def polish(self, text: str) -> str:
         """Text only, no command handling. Used by the speak path."""
+        if self.cfg.get("raw_dictation", False):
+            return text.strip()
         return self._finish(self._normalize(text), trailing_space=True)
 
     def _extract_commands(self, text: str) -> tuple[str, list[dict[str, str]]]:
-        """Peel recognised command phrases off the end of the transcript.
-
-        Only trailing matches count, and only on a word boundary, so "enter" as
-        the last word submits while "re-enter your password" is left alone.
-        """
-        if not self.commands or not self.cfg.get("voice_commands", True):
-            return text, []
-
-        found: list[dict[str, str]] = []
-        for _ in range(5):  # allow "... enter enter"
-            trimmed = text.rstrip(_TRAILING_PUNCTUATION)
-            lowered = trimmed.lower()
-            best: dict[str, str] | None = None
-            for command in self.commands:
-                phrase = command["say"]
-                if not phrase or not lowered.endswith(phrase):
-                    continue
-                boundary = len(lowered) - len(phrase)
-                # Hyphens and apostrophes bind words together: "re-enter" and
-                # "center" must not count as a trailing "enter".
-                if boundary > 0 and lowered[boundary - 1] not in " \t\n":
-                    continue
-                if best is None or len(phrase) > len(best["say"]):
-                    best = command
-            if best is None:
-                break
-            found.insert(0, best)
-            text = trimmed[: len(trimmed) - len(best["say"])].rstrip()
-            # A comma before the command is speech filler, but keep a real period.
-            if text.endswith(","):
-                text = text[:-1].rstrip()
-        return text, found
+        """Only a separate utterance of 'press enter' may send a key."""
+        if self.cfg.get("voice_commands", True) and re.fullmatch(
+            r"press\s+enter[.!?]*", text.strip(), flags=re.IGNORECASE
+        ):
+            return "", [{"say": "press enter", "keys": "enter", "ends_dictation": True}]
+        return text, []
 
     def prepare(self, text: str) -> tuple[str, list[dict[str, str]]]:
         """Split a transcript into text to insert and commands to fire after it."""
+        if self.cfg.get("raw_dictation", False):
+            return text.strip(), []
         normalized = self._normalize(text)
         remaining, commands = self._extract_commands(normalized)
         return self._finish(remaining, trailing_space=not commands), commands
