@@ -78,6 +78,9 @@ class VoiceVibe:
         self.tray = Tray(bool(config.feedback.get("tray_icon", True)), self.request_stop)
         self.overlay = Overlay(config.overlay)
         self.airoot = AirootBridge(config.airoot)
+        # The overlay meters the same microphone dictation records from,
+        # rather than whatever Windows has as the default.
+        self.airoot.set_device(config.input_device)
         self.history = History(
             enabled=bool(config.history.get("enabled", True)),
             keep_days=int(config.history.get("keep_days", 30)),

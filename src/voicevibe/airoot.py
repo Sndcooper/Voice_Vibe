@@ -47,6 +47,7 @@ class AirootBridge:
             self.enabled = False
 
         self._listening = False
+        self.device: int | None = None
         self._lock = threading.Lock()
         self._launched_at: float | None = None
         self._owns_process = False
@@ -57,6 +58,15 @@ class AirootBridge:
         """Preload the overlay hidden, so the first recording shows it instantly."""
         if self.enabled and self.preload and not self._reachable():
             self._launch()
+
+    def set_device(self, device: object) -> None:
+        """Tell the overlay which input to meter.
+
+        The overlay would otherwise use the Windows default, which is the wrong
+        one whenever that default is a loopback: its level bars sit still while
+        dictation records from a real microphone.
+        """
+        self.device = device if isinstance(device, int) else None
 
     def set_listening(self, listening: bool) -> None:
         """Show or hide the overlay. Repeated calls with the same value are free."""
@@ -70,7 +80,7 @@ class AirootBridge:
         # when the probe itself could steal the port from the launching overlay.
         if listening and not self._in_grace() and not self._reachable():
             self._launch()
-        self._send("show" if listening else "hide")
+        self._send(self._show_command() if listening else "hide")
 
     def stop(self) -> None:
         self._stopped.set()
@@ -82,6 +92,9 @@ class AirootBridge:
             self._send("quit")
 
     # --------------------------------------------------------------- internals
+    def _show_command(self) -> str:
+        return "show" if self.device is None else f"show {self.device}"
+
     def _send(self, command: str) -> None:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -131,4 +144,4 @@ class AirootBridge:
         while self._in_grace() and not self._stopped.wait(_RESEND_INTERVAL):
             with self._lock:
                 listening = self._listening
-            self._send("show" if listening else "hide")
+            self._send(self._show_command() if listening else "hide")

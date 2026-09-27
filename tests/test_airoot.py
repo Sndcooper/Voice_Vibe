@@ -52,6 +52,23 @@ class TestBridge(unittest.TestCase):
         self.overlay.close()
         self.exe.unlink(missing_ok=True)
 
+    def test_show_carries_the_chosen_input_device(self) -> None:
+        # The overlay meters its own stream; without this it would use the
+        # Windows default, which is the loopback we deliberately avoided.
+        self.bridge.set_device(2)
+        self.bridge.set_listening(True)
+        self.assertEqual(self.overlay.received(), ["show 2"])
+
+    def test_show_stays_bare_when_the_system_default_is_fine(self) -> None:
+        self.bridge.set_device(None)
+        self.bridge.set_listening(True)
+        self.assertEqual(self.overlay.received(), ["show"])
+
+    def test_a_device_name_is_not_sent_as_a_number(self) -> None:
+        self.bridge.set_device("Microphone Array")
+        self.bridge.set_listening(True)
+        self.assertEqual(self.overlay.received(), ["show"])
+
     def test_show_and_hide_send_one_packet_each(self) -> None:
         self.bridge.set_listening(True)
         self.bridge.set_listening(False)
