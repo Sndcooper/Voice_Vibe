@@ -96,6 +96,10 @@ def recommend_tier_for_cpu() -> Tier:
 
 
 class Transcriber:
+    # Set by the app from [vocab].hotwords; a class default so tests that
+    # build a Transcriber without __init__ still work.
+    hotwords: str | None = None
+
     def __init__(self, model_cfg: dict[str, Any]) -> None:
         register_cuda_dlls()
 
@@ -219,6 +223,9 @@ class Transcriber:
             temperature=0.0,
             condition_on_previous_text=False,
             initial_prompt=self.initial_prompt,
+            # Sits beside initial_prompt in the decoder context; only a
+            # `prefix` would disable it, and none is used.
+            hotwords=self.hotwords,
             # Disable silence-based skipping by default. The log-probability
             # threshold still controls decoder fallback, not a post-decode drop.
             no_speech_threshold=self.cfg.get("no_speech_threshold"),

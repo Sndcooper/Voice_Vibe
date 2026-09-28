@@ -27,6 +27,8 @@ from .screen import ScreenReader
 from .speaker import Speaker, SpeechUnavailable, SystemVoice
 from .transcriber import Transcriber
 from .uia import Finder
+from .vocab import Vocabulary
+from .winctl import front_process
 from .wake import PhraseMatcher
 
 log = logging.getLogger(__name__)
@@ -112,6 +114,7 @@ class VoiceVibe:
             keep_days=int(config.history.get("keep_days", 30)),
         )
         self.transcriber: Transcriber | None = None
+        self.vocab = Vocabulary(config.vocab)
 
         self._jobs: queue.Queue[tuple[np.ndarray, str] | None] = queue.Queue()
         self._stop = threading.Event()
@@ -356,6 +359,12 @@ class VoiceVibe:
             try:
                 if visible_job:
                     self._indicate("busy")
+                if self.transcriber is not None:
+                    # Per utterance: the front app may have changed since the last.
+                    armed = not visible_job
+                    self.transcriber.initial_prompt = self._decoder_prompt(
+                        armed, "" if armed else front_process()
+                    )
                 started = time.perf_counter()
                 text = self.transcriber.transcribe(audio) if self.transcriber else ""
                 elapsed = time.perf_counter() - started
@@ -528,6 +537,17 @@ class VoiceVibe:
         log.debug("Decoder prompt biased with: %s", hint)
         return f"{existing} {hint}".strip() if existing else hint
 
+    def _decoder_prompt(self, armed: bool, process: str = "") -> str | None:
+        """What initial_prompt should be for the next utterance.
+
+        Armed: the wake phrases only. Otherwise the configured prompt plus the
+        front app's hint (vocab.py) -- never both, for the reason below.
+        """
+        if armed:
+            return self._wake_biased_prompt()
+        existing = str(self.config.model.get("initial_prompt") or "").strip()
+        return " ".join(p for p in (existing, self.vocab.hint(process)) if p) or None
+
     def _set_wake_bias(self, armed: bool) -> None:
         """Bias the decoder toward the wake phrase only while listening for it.
 
@@ -538,11 +558,13 @@ class VoiceVibe:
         """
         if self.transcriber is None:
             return
-        plain = str(self.config.model.get("initial_prompt") or "").strip() or None
-        self.transcriber.initial_prompt = self._wake_biased_prompt() if armed else plain
+        self.transcriber.initial_prompt = self._decoder_prompt(
+            armed, "" if armed else front_process()
+        )
 
     def run(self) -> int:
         self.transcriber = Transcriber(self.config.model)
+        self.transcriber.hotwords = self.vocab.hotwords_text()
         self._set_wake_bias(False)
         self.transcriber.warmup(int(self.config.audio["sample_rate"]))
 

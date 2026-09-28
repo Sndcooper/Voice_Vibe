@@ -124,6 +124,11 @@ DEFAULTS: dict[str, Any] = {
         "yes_words": ["yes", "confirm"],
         "no_words": ["no", "cancel", "stop", "never mind"],
     },
+    "vocab": {
+        "hotwords": [],
+        "app_prompts": True,
+        "prompts": {},
+    },
     "airoot": {
         "enabled": False,
         "exe": "",
@@ -155,6 +160,7 @@ class Config:
     history: dict[str, Any] = field(default_factory=dict)
     assistant: dict[str, Any] = field(default_factory=dict)
     control: dict[str, Any] = field(default_factory=dict)
+    vocab: dict[str, Any] = field(default_factory=dict)
     screen: dict[str, Any] = field(default_factory=dict)
     airoot: dict[str, Any] = field(default_factory=dict)
     apps: list[dict[str, Any]] = field(default_factory=list)
@@ -269,6 +275,7 @@ def load_config(explicit: str | Path | None = None) -> Config:
         history=merged["history"],
         assistant=merged["assistant"],
         control=merged["control"],
+        vocab=merged["vocab"],
         screen=merged["screen"],
         airoot=merged["airoot"],
         apps=apps,

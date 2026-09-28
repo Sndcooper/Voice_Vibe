@@ -225,6 +225,14 @@ def process(hwnd: int | None) -> str:
     return str(info.get("process_name") or "").lower()
 
 
+def front_process() -> str:
+    """Executable name of the foreground window's process, lowercase, or ""."""
+    try:
+        return process(foreground())
+    except Exception:
+        return ""
+
+
 class Desktop:
     """The window operations the executor needs, as one replaceable object."""
 

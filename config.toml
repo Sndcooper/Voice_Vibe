@@ -292,6 +292,20 @@ preload = true
 # Close it when Voice Vibe quits -- only if Voice Vibe was the one that started it.
 quit_on_exit = true
 
+# Words Whisper should expect.
+[vocab]
+# Names and jargon it would otherwise spell by sound. Passed to faster-whisper
+# as hotwords; costs nothing at runtime.
+hotwords = []
+# Add a short hint in the style of the front app to the decoder prompt: code
+# words in editors and terminals, plain prose in Claude / ChatGPT. Not used
+# while a session waits for its wake word.
+app_prompts = true
+# Per-app hints, by process name; these replace the built-in ones, and ""
+# turns one off.
+# [vocab.prompts]
+# "code.exe" = "Python, FastAPI, pytest, async def, pull request."
+
 # How the screen is read when you ask about it.
 [screen]
 enabled = true
