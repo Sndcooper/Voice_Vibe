@@ -126,6 +126,13 @@ min_segment = 0.3
 max_segment = 60.0
 # Audio retained from just before speech starts, so the first syllable survives.
 pre_roll = 0.35
+# Interim text while you speak (dictation and a woken session), replaced by
+# the real transcript on the pause. Shown on the Airoot overlay (as a
+# "Listening" transcript) and the orb. "auto" = only with a GPU: on a CPU an
+# interim decode competes with the final one. false keeps the logo-only look.
+partials = "auto"
+# Seconds between interim updates.
+partial_interval = 0.8
 
 # Wake word for session mode. With this on, an open session types nothing until
 # it hears one of `phrases`. After a submit command fires it goes back to waiting,

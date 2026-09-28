@@ -6,6 +6,7 @@ import ctypes
 import logging
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -234,7 +235,30 @@ class Transcriber:
         )
         log.warning("Now running %s on CPU (%s).", self.model_name, self.compute_type)
 
-    def transcribe(self, audio: np.ndarray) -> str:
+    def _decode_lock(self) -> threading.Lock:
+        lock = self.__dict__.get("_lock")
+        if lock is None:
+            lock = self.__dict__.setdefault("_lock", threading.Lock())
+        return lock
+
+    def transcribe(self, audio: np.ndarray, beam_size: int | None = None,
+                   wait: bool = True) -> str | None:
+        """Decode `audio`. One decode at a time per model.
+
+        `wait=False` is for interim transcripts: if the model is busy (with
+        the final transcript, which matters more) return None at once
+        instead of queueing behind it. `beam_size` overrides the configured
+        one, e.g. 1 for a quick interim pass.
+        """
+        lock = self._decode_lock()
+        if not lock.acquire(blocking=wait):
+            return None
+        try:
+            return self._transcribe(audio, beam_size)
+        finally:
+            lock.release()
+
+    def _transcribe(self, audio: np.ndarray, beam_size: int | None) -> str:
         language = self.cfg.get("language", "en")
         if isinstance(language, str) and language.lower() in ("", "auto", "none"):
             language = None
@@ -247,7 +271,7 @@ class Transcriber:
         segments, _info = self.model.transcribe(
             audio,
             language=language,
-            beam_size=int(self.cfg.get("beam_size", 3) or 3),
+            beam_size=int(beam_size or self.cfg.get("beam_size", 3) or 3),
             vad_filter=bool(self.cfg.get("vad_filter", False)),
             # Deterministic decoding: avoid random high-temperature retries.
             temperature=0.0,

@@ -33,10 +33,22 @@ class Recorder:
         self._frames = 0
         self._lock = threading.Lock()
         self._overflowed = False
+        self._take = 0
 
     @property
     def is_recording(self) -> bool:
         return self._stream is not None
+
+    def snapshot(self) -> tuple[int, np.ndarray] | None:
+        """(take id, audio so far) while recording, for interim transcripts."""
+        with self._lock:
+            if self._stream is None or not self._chunks:
+                return None
+            return self._take, np.concatenate(self._chunks).astype(np.float32, copy=False)
+
+    def still(self, take: int) -> bool:
+        """Whether take `take` is still being recorded."""
+        return self._stream is not None and self._take == take
 
     def detach(self) -> None:
         """Mark the recording finished without paying for the drain yet.
@@ -63,6 +75,7 @@ class Recorder:
             self._chunks = []
             self._frames = 0
             self._overflowed = False
+            self._take += 1
         self._stream = sd.InputStream(
             samplerate=self.sample_rate,
             device=self.device,
@@ -163,10 +176,23 @@ class SegmentRecorder:
         self._voiced_run = 0
         self._noise: float | None = None
         self.segments = 0
+        self._utterance = 0
 
     @property
     def is_recording(self) -> bool:
         return self._stream is not None
+
+    def snapshot(self) -> tuple[int, np.ndarray] | None:
+        """(utterance id, speech so far) mid-utterance, for interim transcripts."""
+        with self._lock:
+            if not self._in_speech or not self._speech:
+                return None
+            return self._utterance, np.concatenate(self._speech).astype(np.float32, copy=False)
+
+    def still(self, utterance: int) -> bool:
+        """Whether utterance `utterance` is still being spoken."""
+        with self._lock:
+            return self._in_speech and self._utterance == utterance
 
     def _take_locked(self) -> np.ndarray | None:
         """Close off the current utterance and return it. Caller holds the lock."""
@@ -252,6 +278,7 @@ class SegmentRecorder:
         self._voiced_run += 1
         if self._voiced_run >= 2:  # two blocks avoids keyboard-click triggers
             self._in_speech = True
+            self._utterance += 1
             self._speech = list(self._pre_roll)
             self._pre_roll.clear()
             self._silence_blocks = 0

@@ -31,6 +31,8 @@ DEFAULTS: dict[str, Any] = {
         "min_segment": 0.3,
         "max_segment": 60.0,
         "pre_roll": 0.35,
+        "partials": "auto",
+        "partial_interval": 0.8,
     },
     "wake": {
         "enabled": True,

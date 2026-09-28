@@ -376,6 +376,64 @@ class VoiceVibe:
         self.beeper.sleep()
         self._indicate(self._session_tray())
 
+    # ------------------------------------------------------------- partials
+    def _partials_enabled(self) -> bool:
+        """[continuous].partials: true, false, or "auto" (GPU only -- on a
+        CPU an interim decode competes with the final one for the cores)."""
+        setting = str(self.config.continuous.get("partials", "auto")).lower()
+        if setting in ("true", "on", "yes", "1"):
+            return True
+        if setting == "auto":
+            return self.transcriber is not None and self.transcriber.device == "cuda"
+        return False
+
+    def _partial_source(self):  # noqa: ANN202
+        """The recorder currently taking speech meant for the cursor, if any."""
+        if self.recorder.is_recording:
+            return self.recorder
+        if self.session.is_recording and not (self.wake_enabled and self._wake_state == ARMED):
+            return self.session
+        return None
+
+    def _partial_once(self, last: tuple[int, int]) -> tuple[int, int]:
+        """One interim transcript, if there is something new to show.
+
+        Returns the (take, samples) now shown, so the next pass only decodes
+        once the take has grown. A result is dropped if its take ended while
+        it was decoding: the final transcript is already up by then, and a
+        stale partial must not replace it.
+        """
+        source = self._partial_source()
+        if source is None or self.confirmer.pending:
+            return last
+        snap = source.snapshot()
+        if snap is None:
+            return last
+        take, audio = snap
+        rate = int(self.config.audio["sample_rate"])
+        if len(audio) < 0.8 * rate or (take == last[0] and len(audio) - last[1] < 0.4 * rate):
+            return last
+        model = self.command_transcriber or self.transcriber
+        if model is None:
+            return last
+        text = model.transcribe(audio, beam_size=1, wait=False)
+        if text is None:  # the model is busy with a final transcript
+            return last
+        if text and source.still(take):
+            self.airoot.show_transcript(text, "Listening")
+            self.overlay.show(text)
+        return take, len(audio)
+
+    def _partials(self) -> None:
+        """Interim text while speaking, finalised by the normal transcript."""
+        interval = max(0.2, float(self.config.continuous.get("partial_interval", 0.8)))
+        last = (0, 0)
+        while not self._stop.wait(interval):
+            try:
+                last = self._partial_once(last)
+            except Exception:
+                log.debug("interim transcript failed", exc_info=True)
+
     def _watchdog(self) -> None:
         """Drop back to armed if a dictating session goes quiet.
 
@@ -750,6 +808,8 @@ class VoiceVibe:
         self.airoot.start()
         threading.Thread(target=self._worker, name="worker", daemon=True).start()
         threading.Thread(target=self._watchdog, name="watchdog", daemon=True).start()
+        if self._partials_enabled():
+            threading.Thread(target=self._partials, name="partials", daemon=True).start()
         self._bind_hotkeys()
         self.hotkeys.start()
 
