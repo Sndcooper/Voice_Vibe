@@ -114,6 +114,8 @@ DEFAULTS: dict[str, Any] = {
     "control": {
         "enabled": False,
         "prefixes": ["computer"],
+        "scroll_amount": 5,
+        "keep_scrolling_limit": 30.0,
         "confirm_words": ["delete", "uninstall", "send", "buy"],
         "confirm_timeout": 8.0,
         "yes_words": ["yes", "confirm"],

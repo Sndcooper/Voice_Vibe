@@ -101,7 +101,7 @@ class VoiceVibe:
             confirm_words=control.get("confirm_words", DEFAULT_CONFIRM_WORDS),
             confirm_timeout=timeout,
         )
-        self.router = Router(control, executor=self.executor)
+        self.router = Router(control, executor=self.executor, commands=config.commands)
         self.history = History(
             enabled=bool(config.history.get("enabled", True)),
             keep_days=int(config.history.get("keep_days", 30)),
@@ -242,6 +242,8 @@ class VoiceVibe:
     def toggle_session(self) -> None:
         if self.session.is_recording:
             self.session.stop()
+            # With the mic closed nobody can say "stop" any more.
+            self.router.stop()
             log.info("Session closed after %d segment(s).", self.session.segments)
             self._wake_state = ARMED
             self._indicate("idle")
@@ -377,6 +379,16 @@ class VoiceVibe:
 
     def _do_session(self, text: str, elapsed: float) -> None:
         """One utterance from a session, routed by the wake state."""
+        # "stop" must reach a running "keep scrolling" from any state. By the
+        # time someone says it, the watchdog may already have re-armed the
+        # session, and then it would be ignored for lack of a wake word.
+        if self.router.is_stop(text):
+            self.router.stop()
+            log.info("[%.2fs] -> command | stop", elapsed)
+            self.overlay.show("Stopped")
+            self.beeper.done()
+            return
+
         if not self.wake_enabled:
             self._do_command_or_insert(text, elapsed)
             return
@@ -424,6 +436,8 @@ class VoiceVibe:
                 self.history.add(action="command", heard=text.strip(),
                                  seconds=round(elapsed, 2))
                 self.overlay.show(route.caption or command.strip())
+                if route.speak:
+                    self.voice.say(route.speak)
                 self._ends_dictation = route.ends_dictation
                 self.beeper.done()
                 return
@@ -571,6 +585,7 @@ class VoiceVibe:
         self.overlay.stop()
         self.airoot.stop()
         self.hotkeys.stop()
+        self.router.stop()
         if self.session.is_recording:
             self.session.stop()
         self.recorder.abort()

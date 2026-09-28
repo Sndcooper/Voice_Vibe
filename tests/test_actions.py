@@ -382,11 +382,26 @@ class TestTriggerWords(unittest.TestCase):
         self.assertEqual(answers.asked[0][0], "send it to everyone")
         self.assertEqual(executor.keyboard.events, [])
 
+    def test_a_confirmed_command_is_not_asked_again_inside(self) -> None:
+        # "delete line" presses the delete key: one question, not two.
+        answers = Answers(True)
+        executor = gated(answers)
+        executor.run([{"keys": "home"}, {"keys": "shift+down"}, {"keys": "delete"}],
+                     command="delete line")
+        self.assertEqual(answers.asked, [("delete line", 8.0)])
+
+    def test_explicit_gates_inside_a_confirmed_command_still_ask(self) -> None:
+        answers = Answers(True, True)
+        executor = gated(answers)
+        executor.run([{"keys": "a"}, {"keys": "enter", "confirm": "Really send?"}],
+                     command="send it")
+        self.assertEqual([prompt for prompt, _ in answers.asked], ["send it", "Really send?"])
+
     def test_adjacent_gates_become_one_question(self) -> None:
         answers = Answers(True)
         executor = gated(answers)
-        executor.run({"click": [1, 1], "label": "send email"}, command="send the email")
-        self.assertEqual(answers.asked, [("send the email; send email", 8.0)])
+        executor.run({"click": [1, 1], "confirm": "Really?"}, command="send the email")
+        self.assertEqual(answers.asked, [("send the email; Really?", 8.0)])
 
     def test_words_are_configurable(self) -> None:
         executor = gated(Answers(), confirm_words=["publish"])

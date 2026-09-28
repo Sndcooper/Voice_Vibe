@@ -96,15 +96,6 @@ class TestDisabled(unittest.TestCase):
         self.assertIsNone(empty.split("computer open chrome"))
 
 
-class TestRouting(unittest.TestCase):
-    def test_nothing_is_handled_yet(self) -> None:
-        r = router()
-        for command in ("open chrome", "scroll down", "", "delete everything"):
-            with self.subTest(command=command):
-                self.assertEqual(r.route(command), NOT_HANDLED)
-                self.assertFalse(r.route(command).handled)
-
-
 class RecordingRouter(Router):
     """Handles exactly the commands it is given, and remembers what it saw."""
 

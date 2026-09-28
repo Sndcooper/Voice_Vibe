@@ -211,11 +211,29 @@ voice_rate = 1
 # Spoken commands inside a session: start an utterance with a prefix word
 # ("computer, ...") to aim it at the computer instead of the cursor. The prefix
 # must come first; "the computer is slow" is still typed. In a wake-word session
-# it works once woken. No commands exist yet, so anything prefixed is typed as
+# it works once woken. Anything prefixed that is not a command is typed as
 # heard, prefix included.
+#
+# Commands (the whole utterance must be one of these):
+#   editing  save, save as <name>, find [<text>], find and replace, select all,
+#            copy, cut, paste, undo, redo, bold, italic, underline, delete line
+#   scroll   scroll up/down/left/right [N], page up/down, go to top/bottom,
+#            keep scrolling [up/down], stop
+#   tabs     new tab, close tab, next/previous tab, tab N, first..eighth tab,
+#            last tab, reopen closed tab, duplicate tab
+#   windows  minimize, maximize, restore, snap left/right,
+#            move to other monitor, show desktop, switch to <app or title>
+#   system   volume up/down [N], louder, quieter, mute, play/pause, next/previous
+#            track, screenshot, clipboard, lock (asks first)
+# A [[commands]] row whose `say` matches a command replaces the built-in one,
+# e.g. say = "delete line", keys = "ctrl+shift+k" for VS Code.
 [control]
 enabled = false
 prefixes = ["computer"]
+# Wheel notches for a plain "scroll down". Each notch is ~3 lines.
+scroll_amount = 5
+# "keep scrolling" stops by itself after this many seconds.
+keep_scrolling_limit = 30.0
 # A command that mentions any of these -- in what you said, or in a step's
 # label or keys -- is read back and waits for a spoken yes before it runs.
 # Matches inside words, so "send" also covers "sending" and "resend". This cannot

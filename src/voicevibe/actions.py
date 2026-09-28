@@ -6,6 +6,10 @@ A spec is plain data, so a router, a config table, or a test can build one:
     {"type_text": "hello"}
     {"click": [x, y]}                 or {"click": {"x", "y", "button", "count"}}
     {"scroll": ["down", 3]}           or {"scroll": {"direction", "amount"}}
+    {"wait": 0.5}                     seconds, for a dialog to open
+    {"window": "minimize"}            or maximize / restore, the front window
+    {"focus": hwnd}                   or {"focus": {"hwnd", "title"}}
+    {"lock": true}                    lock the workstation
     {"sequence": [step, ...]}         a bare list means the same
 
 Any step, sequences included, may also carry:
@@ -49,6 +53,8 @@ MAX_DEPTH = 8
 MAX_TEXT = 10_000
 MAX_SCROLL = 50
 MAX_CLICKS = 3
+MAX_WAIT = 10.0
+WINDOW_OPS = ("minimize", "maximize", "restore")
 
 DEFAULT_CONFIRM_WORDS = ("delete", "uninstall", "send", "buy")
 DEFAULT_CONFIRM_TIMEOUT = 8.0
@@ -120,7 +126,38 @@ class Scroll:
         return f"scroll {self.direction} {self.amount}"
 
 
-Step = Union[Keys, TypeText, Click, Scroll, Confirm]
+@dataclass(frozen=True)
+class Wait:
+    seconds: float
+
+    def describe(self) -> str:
+        return f"wait {self.seconds:g}s"
+
+
+@dataclass(frozen=True)
+class Window:
+    op: str
+
+    def describe(self) -> str:
+        return f"{self.op} the window"
+
+
+@dataclass(frozen=True)
+class Focus:
+    hwnd: int
+    title: str = ""
+
+    def describe(self) -> str:
+        return f"switch to {self.title or self.hwnd}"
+
+
+@dataclass(frozen=True)
+class Lock:
+    def describe(self) -> str:
+        return "lock the computer"
+
+
+Step = Union[Keys, TypeText, Click, Scroll, Wait, Window, Focus, Lock, Confirm]
 
 # Asked before a step: yes -> run it. Anything else, or an exception, cancels.
 Confirmer = Callable[[str, float], bool]
@@ -228,11 +265,51 @@ def _parse_scroll(value: Any) -> Scroll:
     return Scroll(direction, amount)
 
 
+def _parse_wait(value: Any) -> Wait:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ActionError(f"wait must be a number of seconds, got {value!r}")
+    if not 0 < value <= MAX_WAIT:
+        raise ActionError(f"wait must be above 0 and at most {MAX_WAIT:g}s, got {value}")
+    return Wait(float(value))
+
+
+def _parse_window(value: Any) -> Window:
+    if value not in WINDOW_OPS:
+        raise ActionError(f"window must be one of {WINDOW_OPS}, got {value!r}")
+    return Window(value)
+
+
+def _parse_focus(value: Any) -> Focus:
+    if isinstance(value, dict):
+        unknown = set(value) - {"hwnd", "title"}
+        if unknown or "hwnd" not in value:
+            raise ActionError(f"focus takes hwnd and an optional title, got {value!r}")
+        title = value.get("title", "")
+        if not isinstance(title, str):
+            raise ActionError(f"focus title must be a string, got {title!r}")
+        hwnd = _int(value["hwnd"], "focus hwnd")
+    else:
+        hwnd, title = _int(value, "focus hwnd"), ""
+    if hwnd <= 0:
+        raise ActionError(f"focus hwnd must be positive, got {hwnd}")
+    return Focus(hwnd, title)
+
+
+def _parse_lock(value: Any) -> Lock:
+    if value is not True:
+        raise ActionError(f"lock takes true, got {value!r}")
+    return Lock()
+
+
 _PARSERS = {
     "keys": _parse_keys,
     "type_text": _parse_type_text,
     "click": _parse_click,
     "scroll": _parse_scroll,
+    "wait": _parse_wait,
+    "window": _parse_window,
+    "focus": _parse_focus,
+    "lock": _parse_lock,
 }
 
 
@@ -308,6 +385,9 @@ class Executor:
     `keyboard` and `mouse` are pynput Controllers, created on first use when
     not given. Pass fakes to observe exactly what would be sent.
 
+    `desktop` does the Win32 steps (window, focus, lock); winctl.Desktop by
+    default.
+
     `confirmer(prompt, timeout)` is asked at each Confirm gate and must return
     True to go on. With no confirmer, gated steps never run.
     """
@@ -317,6 +397,7 @@ class Executor:
         dry_run: bool = False,
         keyboard: Any = None,
         mouse: Any = None,
+        desktop: Any = None,
         step_delay: float = 0.05,
         type_delay: float = 0.004,
         confirmer: Confirmer | None = None,
@@ -326,6 +407,7 @@ class Executor:
         self.dry_run = dry_run
         self._keyboard = keyboard
         self._mouse = mouse
+        self._desktop = desktop
         self.confirmer = confirmer
         self.triggers = trigger_pattern(confirm_words)
         self.confirm_timeout = max(0.0, float(confirm_timeout))
@@ -351,15 +433,25 @@ class Executor:
             self._mouse = Controller()
         return self._mouse
 
+    @property
+    def desktop(self):  # noqa: ANN201
+        if self._desktop is None:
+            from .winctl import Desktop
+
+            self._desktop = Desktop()
+        return self._desktop
+
     def plan(self, spec: Any, command: str = "") -> list[Step]:
         """The steps `run` would take, gates included, without taking them."""
-        steps = parse(spec, self.triggers)
         forced_by = _trigger(self.triggers, command)
-        if forced_by:
-            # The spoken request names something dangerous but cannot say which
-            # step does it, so the whole spec waits for a yes.
-            steps = _merge_gates([Confirm(command.strip(), forced_by), *steps])
-        return steps
+        if not forced_by:
+            return parse(spec, self.triggers)
+        # The spoken request names something dangerous but cannot say which
+        # step does it, so the whole spec waits for a yes. That one yes covers
+        # the trigger words inside it too -- "delete line" is asked once, not
+        # again at its delete key. Gates the spec asks for itself still stand.
+        steps = parse(spec, None)
+        return _merge_gates([Confirm(command.strip(), forced_by), *steps])
 
     def run(self, spec: Any, command: str = "") -> list[Step]:
         """Run `spec`, asking at each gate. Returns the steps taken.
@@ -408,8 +500,20 @@ class Executor:
             self.mouse.position = (step.x, step.y)
             self.mouse.click(getattr(Button, step.button), step.count)
         elif isinstance(step, Scroll):
+            # pynput scrolls wherever the pointer is, so this moves the panel
+            # under the mouse -- a sidebar, a preview -- not just the focus.
             dx, dy = _SCROLL[step.direction]
             self.mouse.scroll(dx * step.amount, dy * step.amount)
+        elif isinstance(step, Wait):
+            time.sleep(step.seconds)
+        elif isinstance(step, Window):
+            if not self.desktop.show(step.op):
+                log.info("Could not %s: no ordinary window in front.", step.op)
+        elif isinstance(step, Focus):
+            if not self.desktop.focus(step.hwnd):
+                log.warning("Windows refused to bring %s forward.", step.describe())
+        elif isinstance(step, Lock):
+            self.desktop.lock()
 
     def _release_modifiers(self) -> None:
         # A hotkey modifier still held turns "t" into ctrl+alt+t.
