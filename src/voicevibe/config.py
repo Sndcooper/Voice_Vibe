@@ -40,6 +40,10 @@ DEFAULTS: dict[str, Any] = {
         "bias_prompt": True,
         "active_timeout": 20.0,
         "log_ignored": True,
+        "engine": "whisper",
+        "model": "hey_jarvis",
+        "threshold": 0.5,
+        "confirm_with_whisper": True,
     },
     "model": {
         "name": "auto",

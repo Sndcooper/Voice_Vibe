@@ -140,6 +140,23 @@ sleep_phrases = ["never mind", "nevermind", "go to sleep", "cancel that"]
 active_timeout = 20.0
 # Print what was heard while waiting, so you can spot mishearings and add aliases.
 log_ignored = true
+# What listens for the wake word.
+#   "whisper"       transcribe every utterance while waiting (works with any
+#                   phrase above, but a full decode per utterance all day)
+#   "openwakeword"  a tiny dedicated model scores the audio (~2% of one core);
+#                   Whisper runs only after it fires. Needs:
+#                     uv pip install openwakeword
+#                   Pretrained models: hey_jarvis, alexa, hey_mycroft,
+#                   hey_rhasspy -- there is no "hey computer". For your own
+#                   phrase, train one with openWakeWord and give its .onnx path.
+engine = "whisper"
+model = "hey_jarvis"
+# 0 to 1. Lower wakes more easily and falsely.
+threshold = 0.5
+# After the model fires, the transcript must contain the wake phrase too
+# (the model's phrase is added to `phrases` automatically); otherwise it was a
+# false alarm and the session goes back to waiting.
+confirm_with_whisper = true
 
 # Text-to-speech for the `speak` hotkey, via Soprano (github.com/ekwek1/soprano).
 [speech]

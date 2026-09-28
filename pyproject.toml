@@ -50,6 +50,12 @@ screen = [
     "winrt-Windows.Storage.Streams>=2.0; python_version >= '3.12'",
 ]
 
+# [wake].engine = "openwakeword": a ~2 ms/frame wake word model instead of a
+# Whisper decode per utterance while waiting. Pulls in onnxruntime.
+wakeword = [
+    "openwakeword>=0.6.0",
+]
+
 [project.scripts]
 voicevibe = "voicevibe.__main__:main"
 

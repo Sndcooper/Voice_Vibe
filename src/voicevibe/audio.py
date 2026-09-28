@@ -132,10 +132,14 @@ class SegmentRecorder:
         min_segment: float = 0.4,
         max_segment: float = 60.0,
         pre_roll: float = 0.35,
+        on_frame: Callable[[np.ndarray], None] | None = None,
     ) -> None:
         self.sample_rate = sample_rate
         self.device = device
         self.on_segment = on_segment
+        # Every raw block, speech or not (the wake word model needs them all).
+        # Runs on the callback thread like on_segment: enqueue and return.
+        self.on_frame = on_frame
         self.speech_ratio = speech_ratio
         self.min_rms = min_rms
 
@@ -203,6 +207,11 @@ class SegmentRecorder:
         if status:
             log.debug("audio status: %s", status)
         mono = indata[:, 0].copy()
+        if self.on_frame is not None:
+            try:
+                self.on_frame(mono)
+            except Exception:
+                log.debug("frame handler failed", exc_info=True)
         rms = float(np.sqrt(np.mean(mono * mono)) + 1e-12)
         finished: np.ndarray | None = None
 

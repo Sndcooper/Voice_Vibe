@@ -30,6 +30,7 @@ from .uia import Finder
 from .vocab import Vocabulary
 from .winctl import front_process
 from .wake import PhraseMatcher
+from .wakeword import WakeWordDetector, phrase_for
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,11 @@ DICTATING = "dictating"  # wake phrase heard, everything now goes to the cursor
 
 
 class VoiceVibe:
+    # Wake word model state; class defaults so a partly built instance (tests
+    # construct one piecemeal) behaves as the plain Whisper path.
+    detector: WakeWordDetector | None = None
+    _confirm_wake = False
+
     def __init__(self, config: Config) -> None:
         self.config = config
         self.recorder = Recorder(
@@ -142,6 +148,11 @@ class VoiceVibe:
         if self.wake_enabled and not self.wake_matcher:
             log.warning("[wake].enabled is true but no phrases are set; disabling.")
             self.wake_enabled = False
+        # openWakeWord, when [wake].engine asks for it; built in run().
+        self.detector: WakeWordDetector | None = None
+        # Set when the model woke the session: the next transcript must still
+        # contain the wake phrase, or the wake is treated as a false alarm.
+        self._confirm_wake = False
 
     def _indicate(self, state: str) -> None:
         """Drive every status indicator from one place."""
@@ -236,6 +247,46 @@ class VoiceVibe:
             return
         self._jobs.put((audio, SESSION))
 
+    def _on_frame(self, mono: np.ndarray) -> None:
+        """Audio callback thread: raw blocks to the wake word model, armed only.
+
+        Once awake there is nothing for it to find, so it stops costing CPU.
+        """
+        if self.detector is not None and self._wake_state == ARMED:
+            self.detector.feed(mono)
+
+    def _on_wake_word(self, name: str, score: float) -> None:
+        """Detector thread: the model heard the wake word. Wake without Whisper."""
+        if not self.session.is_recording or self._wake_state != ARMED:
+            return
+        self._wake_state = DICTATING
+        self._confirm_wake = True
+        self._set_wake_bias(False)
+        self._last_activity = time.monotonic()
+        self.beeper.wake()
+        self._indicate("session")
+        log.info("Awake (%s, %.2f). Dictating.", name, score)
+
+    def _start_wake_model(self) -> None:
+        wake = self.config.wake
+        model = str(wake.get("model", "hey_jarvis"))
+        self.detector = WakeWordDetector.create(
+            model,
+            self._on_wake_word,
+            threshold=float(wake.get("threshold", 0.5)),
+            sample_rate=int(self.config.audio["sample_rate"]),
+        )
+        if self.detector is None:
+            return
+        # The transcript check (and "hey jarvis, open ..." in one breath)
+        # needs the model's own phrase among the wake phrases.
+        phrase = phrase_for(model)
+        if phrase and not self.wake_matcher.matches(phrase):
+            phrases = [*wake.get("phrases", []), phrase]
+            self.wake_matcher = PhraseMatcher(phrases, fuzzy=float(wake.get("fuzzy", 0.82) or 0))
+        self.session.on_frame = self._on_frame
+        self.detector.start()
+
     def _show_question(self, text: str, seconds: float) -> None:
         self.overlay.show(text, seconds=seconds)
         self.airoot.show_transcript(text, "Confirm")
@@ -271,6 +322,9 @@ class VoiceVibe:
             return
 
         self._wake_state = ARMED
+        self._confirm_wake = False
+        if self.detector is not None:
+            self.detector.reset()
         self._set_wake_bias(True)
         self._last_activity = time.monotonic()
         self.beeper.session_start()
@@ -297,6 +351,8 @@ class VoiceVibe:
         return "in a session, start with " + " / ".join(f'"{p}"' for p in prefixes[:3])
 
     def _phrase_hint(self) -> str:
+        if self.detector is not None:
+            return f'"{phrase_for(str(self.config.wake.get("model", "")))}"'
         phrases = list(self.config.wake.get("phrases", []))
         return " / ".join(f'"{p}"' for p in phrases[:3]) or '"arise"'
 
@@ -305,6 +361,9 @@ class VoiceVibe:
         if self._wake_state == ARMED:
             return
         self._wake_state = ARMED
+        self._confirm_wake = False
+        if self.detector is not None:
+            self.detector.reset()
         self._set_wake_bias(True)
         log.info("Armed again (%s). Say %s to dictate.", reason, self._phrase_hint())
         self.beeper.sleep()
@@ -356,6 +415,12 @@ class VoiceVibe:
                 return
             audio, action = job
             visible_job = not (action == SESSION and self.wake_enabled and self._wake_state == ARMED)
+            if not visible_job and self.detector is not None:
+                # The wake word model is listening; an armed utterance it did
+                # not fire on is not worth a Whisper decode.
+                log.debug("Armed, no wake word: %.1fs dropped untranscribed.",
+                          len(audio) / int(self.config.audio["sample_rate"]))
+                continue
             try:
                 if visible_job:
                     self._indicate("busy")
@@ -423,6 +488,21 @@ class VoiceVibe:
             # so keep going with whatever followed it.
             text = remainder
             if not text.strip():
+                return
+
+        if self._confirm_wake:
+            # The model woke the session; Whisper gets the final say. The wake
+            # phrase is stripped like any other, and a transcript without it
+            # means the model fired on something else.
+            self._confirm_wake = False
+            woke, remainder = self.wake_matcher.split(text)
+            if woke:
+                text = remainder
+                if not text.strip():
+                    return
+            elif self.config.wake.get("confirm_with_whisper", True):
+                log.info("(wake not confirmed, ignored) %s", text.strip())
+                self._arm("wake word not confirmed")
                 return
 
         self._last_activity = time.monotonic()
@@ -567,6 +647,8 @@ class VoiceVibe:
         self.transcriber.hotwords = self.vocab.hotwords_text()
         self._set_wake_bias(False)
         self.transcriber.warmup(int(self.config.audio["sample_rate"]))
+        if self.wake_enabled and str(self.config.wake.get("engine", "whisper")).lower() == "openwakeword":
+            self._start_wake_model()
 
         if self.config.speech.get("preload") and self.config.hotkeys.get("speak"):
             try:
@@ -614,6 +696,8 @@ class VoiceVibe:
         self.airoot.stop()
         self.hotkeys.stop()
         self.router.stop()
+        if self.detector is not None:
+            self.detector.stop()
         if self.session.is_recording:
             self.session.stop()
         self.recorder.abort()
