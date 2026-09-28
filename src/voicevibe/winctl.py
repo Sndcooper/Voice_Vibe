@@ -217,6 +217,14 @@ def lock() -> bool:
     return bool(ctypes.windll.user32.LockWorkStation())
 
 
+def process(hwnd: int | None) -> str:
+    """Executable name of the process owning `hwnd`, lowercase, or ""."""
+    if not hwnd:
+        return ""
+    info = window_info(hwnd) or {}
+    return str(info.get("process_name") or "").lower()
+
+
 class Desktop:
     """The window operations the executor needs, as one replaceable object."""
 
@@ -225,3 +233,4 @@ class Desktop:
     focus = staticmethod(focus)
     show = staticmethod(show)
     lock = staticmethod(lock)
+    process = staticmethod(process)

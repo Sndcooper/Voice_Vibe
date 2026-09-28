@@ -58,6 +58,9 @@ class FakeDesktop:
     def foreground(self) -> int:
         return self.front
 
+    def process(self, hwnd: int | None) -> str:
+        return ""  # no app profile: these are the global commands
+
     def focus(self, hwnd: int) -> bool:
         self.focused.append(hwnd)
         return True
@@ -145,13 +148,13 @@ class TestScrolling(unittest.TestCase):
                 self.assertEqual(steps_for(said), expected)
 
     def test_scroll_amount_is_configurable(self) -> None:
-        r = Router({"enabled": True, "scroll_amount": 2}, executor=Executor(dry_run=True))
+        r = Router({"enabled": True, "scroll_amount": 2}, executor=Executor(dry_run=True, desktop=FakeDesktop()))
         self.assertEqual(steps_for("scroll down", r), [Scroll("down", 2)])
 
     def test_scrolling_does_not_move_the_pointer(self) -> None:
         # The wheel goes to whatever is under the pointer, so it must stay put.
         mouse = stubs.FakeMouse()
-        executor = Executor(keyboard=stubs.FakeController(), mouse=mouse, step_delay=0)
+        executor = Executor(desktop=FakeDesktop(), keyboard=stubs.FakeController(), mouse=mouse, step_delay=0)
         Router({"enabled": True}, executor=executor).route("scroll down 3")
         self.assertEqual(mouse.events, [("scroll", 0, -3)])
 
@@ -159,7 +162,7 @@ class TestScrolling(unittest.TestCase):
 class TestKeepScrolling(unittest.TestCase):
     def live(self, limit: float = 5.0) -> tuple[Router, stubs.FakeMouse]:
         mouse = stubs.FakeMouse()
-        executor = Executor(keyboard=stubs.FakeController(), mouse=mouse, step_delay=0)
+        executor = Executor(desktop=FakeDesktop(), keyboard=stubs.FakeController(), mouse=mouse, step_delay=0)
         r = Router({"enabled": True, "keep_scrolling_limit": limit}, executor=executor)
         r.repeater.interval = 0.005
         return r, mouse
@@ -456,14 +459,14 @@ class TestUserCommands(unittest.TestCase):
 class TestCancellation(unittest.TestCase):
     def test_a_refused_command_is_handled_not_typed(self) -> None:
         keyboard = stubs.FakeController()
-        executor = Executor(keyboard=keyboard, mouse=stubs.FakeMouse(),
+        executor = Executor(desktop=FakeDesktop(), keyboard=keyboard, mouse=stubs.FakeMouse(),
                             confirmer=lambda p, t: False, step_delay=0)
         route = Router({"enabled": True}, executor=executor).route("delete line")
         self.assertEqual((route.handled, route.caption), (True, "Cancelled"))
         self.assertEqual(keyboard.events, [])
 
     def test_cancelled_is_not_raised_to_the_caller(self) -> None:
-        executor = Executor(confirmer=lambda p, t: False)
+        executor = Executor(desktop=FakeDesktop(), confirmer=lambda p, t: False)
         try:
             Router({"enabled": True}, executor=executor).route("lock")
         except Cancelled:  # pragma: no cover - the assertion is that this never runs
@@ -510,7 +513,7 @@ class TestAppWiring(unittest.TestCase):
 
     def test_bare_stop_works_even_after_re_arming(self) -> None:
         mouse = stubs.FakeMouse()
-        executor = Executor(keyboard=stubs.FakeController(), mouse=mouse, step_delay=0)
+        executor = Executor(desktop=FakeDesktop(), keyboard=stubs.FakeController(), mouse=mouse, step_delay=0)
         r = Router({"enabled": True}, executor=executor)
         vv = self.make(r)
         vv._do_session("computer keep scrolling", 0.1)

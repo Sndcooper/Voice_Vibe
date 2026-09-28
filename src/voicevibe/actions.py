@@ -12,7 +12,15 @@ A spec is plain data, so a router, a config table, or a test can build one:
     {"lock": true}                    lock the workstation
     {"element": {"target": el, "action": "click"}}
                                       a uia.Element; also double_click,
-                                      right_click, hover
+                                      right_click, hover, select, focus
+    {"click_named": "Save|Save all"}  or {"click_named": {"name", "action",
+                                      "pick": "best|first|last", "types"}};
+                                      looked up when the step runs, so it
+                                      can find a menu the previous step opened
+    {"first_of": [spec, spec, ...]}   the first alternative whose click_named
+                                      targets all exist
+    {"say": "text"}                   spoken through the system voice
+    {"say_clipboard": true}           read the clipboard aloud
     {"sequence": [step, ...]}         a bare list means the same
 
 Any step, sequences included, may also carry:
@@ -58,7 +66,8 @@ MAX_SCROLL = 50
 MAX_CLICKS = 3
 MAX_WAIT = 10.0
 WINDOW_OPS = ("minimize", "maximize", "restore")
-POINTER_ACTIONS = ("click", "double_click", "right_click", "hover")
+POINTER_ACTIONS = ("click", "double_click", "right_click", "hover", "select", "focus")
+PICKS = ("best", "first", "last")
 
 DEFAULT_CONFIRM_WORDS = ("delete", "uninstall", "send", "buy")
 DEFAULT_CONFIRM_TIMEOUT = 8.0
@@ -70,6 +79,14 @@ _SCROLL = {"up": (0, 1), "down": (0, -1), "left": (-1, 0), "right": (1, 0)}
 
 class ActionError(ValueError):
     """A spec that cannot be run. Raised before anything is sent."""
+
+
+class TargetNotFound(Exception):
+    """A click_named step found nothing by that name when it came to run."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"nothing called {name!r}")
+        self.name = name
 
 
 class Cancelled(Exception):
@@ -172,7 +189,46 @@ class ElementAction:
         return f"{self.action.replace('_', ' ')} {self.element.describe()}"
 
 
-Step = Union[Keys, TypeText, Click, Scroll, Wait, Window, Focus, Lock, ElementAction, Confirm]
+@dataclass(frozen=True)
+class ClickNamed:
+    """Find an element by name when this step runs, then act on it."""
+
+    names: tuple[str, ...]
+    action: str = "click"
+    pick: str = "best"
+    types: tuple[str, ...] = ()
+
+    def describe(self) -> str:
+        return f"{self.action.replace('_', ' ')} {' or '.join(self.names)!r}"
+
+
+@dataclass(frozen=True)
+class FirstOf:
+    """Alternatives, tried in order until one finds all its targets."""
+
+    alternatives: tuple[tuple[Any, ...], ...]
+
+    def describe(self) -> str:
+        return "first of: " + " / ".join(
+            "; ".join(s.describe() for s in alt) for alt in self.alternatives
+        )
+
+
+@dataclass(frozen=True)
+class Say:
+    text: str = ""
+    clipboard: bool = False
+
+    def describe(self) -> str:
+        return "read the clipboard aloud" if self.clipboard else f"say {self.text!r}"
+
+
+Step = Union[Keys, TypeText, Click, Scroll, Wait, Window, Focus, Lock, ElementAction,
+             ClickNamed, FirstOf, Say, Confirm]
+
+# Finds the element a ClickNamed step means: (names, types, pick) -> element,
+# raising TargetNotFound. The router supplies one bound to the front window.
+Resolver = Callable[[tuple, tuple, str], Any]
 
 # Asked before a step: yes -> run it. Anything else, or an exception, cancels.
 Confirmer = Callable[[str, float], bool]
@@ -331,6 +387,43 @@ def _parse_element(value: Any) -> ElementAction:
     return ElementAction(target, action)
 
 
+def _parse_click_named(value: Any) -> ClickNamed:
+    if isinstance(value, str):
+        value = {"name": value}
+    if not isinstance(value, dict) or not isinstance(value.get("name"), str):
+        raise ActionError(f"click_named needs a name, got {value!r}")
+    unknown = set(value) - {"name", "action", "pick", "types"}
+    if unknown:
+        raise ActionError(f"click_named does not take {sorted(unknown)}")
+    names = tuple(n.strip() for n in value["name"].split("|") if n.strip())
+    if not names:
+        raise ActionError(f"click_named needs a name, got {value!r}")
+    action = value.get("action", "click")
+    if action not in POINTER_ACTIONS:
+        raise ActionError(f"click_named action must be one of {POINTER_ACTIONS}, got {action!r}")
+    pick = value.get("pick", "best")
+    if pick not in PICKS:
+        raise ActionError(f"click_named pick must be one of {PICKS}, got {pick!r}")
+    types = value.get("types", ())
+    if isinstance(types, str):
+        types = (types,)
+    if not isinstance(types, (list, tuple)) or not all(isinstance(t, str) for t in types):
+        raise ActionError(f"click_named types must be control type names, got {types!r}")
+    return ClickNamed(names, action, pick, tuple(types))
+
+
+def _parse_say(value: Any) -> Say:
+    if not isinstance(value, str) or not value.strip():
+        raise ActionError(f"say needs text, got {value!r}")
+    return Say(value.strip())
+
+
+def _parse_say_clipboard(value: Any) -> Say:
+    if value is not True:
+        raise ActionError(f"say_clipboard takes true, got {value!r}")
+    return Say(clipboard=True)
+
+
 _PARSERS = {
     "keys": _parse_keys,
     "type_text": _parse_type_text,
@@ -341,6 +434,9 @@ _PARSERS = {
     "focus": _parse_focus,
     "lock": _parse_lock,
     "element": _parse_element,
+    "click_named": _parse_click_named,
+    "say": _parse_say,
+    "say_clipboard": _parse_say_clipboard,
 }
 
 
@@ -386,10 +482,22 @@ def parse(spec: Any, triggers: re.Pattern[str] | None = None) -> list[Step]:
             fallback = "; ".join(s.describe() for s in covered[:3])
             fallback += "; ..." if len(covered) > 3 else ""
             keys = ""
+        elif kind == "first_of":
+            if not isinstance(value, (list, tuple)) or not value:
+                raise ActionError(f"first_of must be a non-empty list, got {value!r}")
+            # Each alternative is parsed -- and gated -- on its own.
+            step = FirstOf(tuple(tuple(parse(alt, triggers)) for alt in value))
+            count += sum(len(alt) for alt in step.alternatives)
+            if count > MAX_STEPS:
+                raise ActionError(f"more than {MAX_STEPS} steps")
+            steps.append(step)
+            covered = [step]
+            fallback = step.describe()
+            keys = ""
         else:
             if kind not in _PARSERS:
                 raise ActionError(f"unknown action {kind!r}; expected one of "
-                                  f"{('sequence', *_PARSERS)}")
+                                  f"{('sequence', 'first_of', *_PARSERS)}")
             step = _PARSERS[kind](value)
             count += 1
             if count > MAX_STEPS:
@@ -397,7 +505,14 @@ def parse(spec: Any, triggers: re.Pattern[str] | None = None) -> list[Step]:
             steps.append(step)
             covered = [step]
             fallback = step.describe()
-            keys = step.spec if isinstance(step, Keys) else ""
+            # What a step is *about*, for trigger words: its keys, or the
+            # name of what it will click.
+            if isinstance(step, Keys):
+                keys = step.spec
+            elif isinstance(step, ClickNamed):
+                keys = " ".join(step.names)
+            else:
+                keys = ""
 
         # An explicit `confirm: false` does not beat a trigger word: the list
         # exists precisely for specs that forgot, or were wrong, to ask.
@@ -421,6 +536,10 @@ class Executor:
 
     `confirmer(prompt, timeout)` is asked at each Confirm gate and must return
     True to go on. With no confirmer, gated steps never run.
+
+    `resolver` finds click_named targets; `say(text)` speaks. Both are set by
+    whoever owns them (the router, the app); without them those steps fail
+    as "not found" or are logged.
     """
 
     def __init__(
@@ -434,12 +553,16 @@ class Executor:
         confirmer: Confirmer | None = None,
         confirm_words: Iterable[str] = DEFAULT_CONFIRM_WORDS,
         confirm_timeout: float = DEFAULT_CONFIRM_TIMEOUT,
+        resolver: Resolver | None = None,
+        say: Callable[[str], Any] | None = None,
     ) -> None:
         self.dry_run = dry_run
         self._keyboard = keyboard
         self._mouse = mouse
         self._desktop = desktop
         self.confirmer = confirmer
+        self.resolver = resolver
+        self.say = say
         self.triggers = trigger_pattern(confirm_words)
         self.confirm_timeout = max(0.0, float(confirm_timeout))
         # Apps need a beat between steps: ctrl+l then typing, with no gap,
@@ -492,6 +615,10 @@ class Executor:
         is invalid (before anything runs) and Cancelled if a gate is refused.
         """
         steps = self.plan(spec, command)
+        self._execute(steps)
+        return steps
+
+    def _execute(self, steps: Iterable[Step]) -> None:
         for index, step in enumerate(steps):
             if self.dry_run:
                 log.info("(dry run) %s", step.describe())
@@ -499,13 +626,27 @@ class Executor:
                 if not self._confirmed(step):
                     log.info("Cancelled at %s", step.describe())
                     raise Cancelled(step.prompt)
+            elif isinstance(step, FirstOf):
+                self._first_of(step)
             else:
                 if index and self.step_delay:
                     time.sleep(self.step_delay)
                 log.debug("action: %s", step.describe())
                 self._perform(step)
             self.performed.append(step)
-        return steps
+
+    def _first_of(self, step: FirstOf) -> None:
+        missing: list[str] = []
+        for alternative in step.alternatives:
+            try:
+                self._execute(alternative)
+                return
+            except TargetNotFound as exc:
+                # Steps before the missing target have run -- "show sidebar"
+                # before a "New chat" that still is not there -- which is why
+                # alternatives should start with the lookup where they can.
+                missing.append(exc.name)
+        raise TargetNotFound(missing[-1] if missing else "")
 
     def _confirmed(self, gate: Confirm) -> bool:
         if self.confirmer is None:
@@ -547,12 +688,36 @@ class Executor:
             self.desktop.lock()
         elif isinstance(step, ElementAction):
             self._act(step)
+        elif isinstance(step, ClickNamed):
+            if self.resolver is None:
+                raise TargetNotFound(step.names[0])
+            element = self.resolver(step.names, step.types, step.pick)
+            self._act(ElementAction(element, step.action))
+        elif isinstance(step, Say):
+            self._say(step)
+
+    def _say(self, step: Say) -> None:
+        text = step.text
+        if step.clipboard:
+            import pyperclip
+
+            text = pyperclip.paste()
+        if not text.strip():
+            log.info("Nothing to read aloud.")
+        elif self.say is None:
+            log.info("(no voice) %s", text[:200])
+        else:
+            self.say(text)
 
     def _act(self, step: ElementAction) -> None:
         # A plain click goes through the element's own Invoke/Expand/Select
         # pattern when it has one: no pointer jump, and it works even when
         # something is drawn over the element. Everything else is the mouse.
         if step.action == "click" and step.element.invoke():
+            return
+        if step.action == "select" and step.element.select():
+            return
+        if step.action == "focus" and step.element.focus():
             return
         from pynput.mouse import Button
 

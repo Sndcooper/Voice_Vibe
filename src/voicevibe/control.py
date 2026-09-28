@@ -21,6 +21,7 @@ they time out.
 
 from __future__ import annotations
 
+import copy
 import logging
 import re
 import threading
@@ -28,8 +29,19 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .actions import MAX_SCROLL, ActionError, Cancelled, Executor, parse
-from .uia import INTERACTIVE, LINKS, Finder, ambiguous, rank, rank_text, reading_order
+from .actions import MAX_SCROLL, ActionError, Cancelled, Executor, TargetNotFound, parse
+from .profiles import Profile, fill, load_profiles
+from .uia import (
+    INTERACTIVE,
+    LINKS,
+    Finder,
+    ambiguous,
+    rank,
+    rank_text,
+    reading_order,
+    score,
+    split_kind,
+)
 from .wake import _LEADING, _WORD, PhraseMatcher
 from .winctl import match_window
 
@@ -171,12 +183,22 @@ class Router:
         commands: list[dict] | None = None,
         finder: Finder | None = None,
         badges: Any = None,
+        profiles: dict[str, Profile] | list[dict] | None = None,
     ) -> None:
         cfg = cfg or {}
         self.enabled = bool(cfg.get("enabled", False))
         # Confirmation of dangerous steps lives in the executor, so no command
         # -- built in or configured -- can skip it.
         self.executor = executor or Executor()
+        # click_named steps (profiles) look their targets up through here.
+        self.executor.resolver = self._resolve
+        # Per-app commands. A dict is ready-made (tests); a list is
+        # [[profiles]] rows to lay over the built-ins.
+        self.profiles = profiles if isinstance(profiles, dict) else load_profiles(profiles)
+        # An unrecognised command that is exactly the name of something on
+        # screen clicks it. Off unless configured: config.toml turns it on.
+        self.implicit_click = bool(cfg.get("implicit_click", False))
+        self.implicit_ocr = bool(cfg.get("implicit_ocr", False))
         self.scroll_amount = max(1, min(MAX_SCROLL, int(cfg.get("scroll_amount", 5))))
         self.repeater = Repeater(self.executor, limit=float(cfg.get("keep_scrolling_limit", 30.0)))
         prefixes = cfg.get("prefixes", ["computer"])
@@ -344,6 +366,16 @@ class Router:
         if not _NEXT.fullmatch(text):
             self._others = []
 
+        # 1. The front app's own meaning of the phrase.
+        profile = self.profiles.get(self._process())
+        hit = profile.match(text) if profile else None
+        if hit is not None:
+            entry, values = hit
+            # Trigger words are checked against the phrase's own words, not
+            # what filled it: "ask how to delete a branch" types a question.
+            return self._run(fill(copy.deepcopy(entry.spec), values), entry.literal, text)
+
+        # 2. Global commands: [[commands]] rows, then the built-in set.
         row = self.user_commands.get(text.lower())
         if row is not None:
             return self._run(_keys(row["keys"]), command, text,
@@ -359,7 +391,17 @@ class Router:
             if isinstance(result, Route):
                 return result
             return self._run(result, command, text)
+
+        # 3-4. Something on screen by exactly that name; then the pixels.
+        if self.implicit_click:
+            route = self._implicit_click(text, command)
+            if route is not None:
+                return route
+        # 5. Dictation.
         return NOT_HANDLED
+
+    def _process(self) -> str:
+        return self.executor.desktop.process(self._front())
 
     def _run(self, spec: Any, command: str, caption: str, ends_dictation: bool = False) -> Route:
         # Any other command ends a "keep scrolling": carrying on scrolling
@@ -369,6 +411,8 @@ class Router:
             self.executor.run(spec, command=command)
         except Cancelled:
             return Route(handled=True, caption="Cancelled")
+        except TargetNotFound as exc:
+            return Route(handled=True, caption=f"No {exc.name}", speak=f"I can't find {exc.name}.")
         except ActionError as exc:
             # A built-in producing a bad spec is a bug here, not something to
             # type into the document.
@@ -531,3 +575,61 @@ class Router:
         self._clear_numbers()
         return self._act(element, verb, command)
 
+    # ------------------------------------------------ lookups for other steps
+    def _resolve(self, names: tuple, types: tuple, pick: str) -> Any:
+        """The element a click_named step means, looked up as it runs.
+
+        Fresh every time: the step before may have opened the menu this one
+        clicks in. Menus and flyouts are separate windows of the same app,
+        so those are searched too.
+        """
+        hwnd = self._front()
+        if not hwnd:
+            raise TargetNotFound(names[0])
+        self.finder.new_command()
+        elements = self.finder.elements(hwnd, types or INTERACTIVE, popups=True)
+        for name in names:
+            matches = rank(name, elements)
+            if matches:
+                return self._choose(name, matches, pick)
+        raise TargetNotFound(names[0])
+
+    @staticmethod
+    def _choose(name: str, matches: list, pick: str) -> Any:
+        """Among equally good matches, the first or last on screen.
+
+        Chat apps put a Copy and a Retry under every answer; "last" is the
+        newest one, at the bottom.
+        """
+        if pick == "best":
+            return matches[0]
+        target, _ = split_kind(name)
+        top = score(target, matches[0].name)
+        tied = [m for m in matches if abs(score(target, m.name) - top) < 1e-6]
+        ordered = reading_order(tied)
+        return ordered[-1] if pick == "last" else ordered[0]
+
+    def _implicit_click(self, text: str, command: str) -> Route | None:
+        """"computer Downloads" with no verb: click it if it is exactly there.
+
+        Stricter than "click X" -- the name must match outright, not nearly --
+        because nothing in the words said this was meant as a click.
+        """
+        target, _ = split_kind(text)
+        if len(target) < 2:
+            return None
+        hwnd = self._front()
+        if not hwnd:
+            return None
+        exact = [e for e in self.finder.elements(hwnd) if score(target, e.name) >= 1.0]
+        if len(exact) == 1:
+            return self._act(exact[0], "click", command)
+        if len(exact) > 1:
+            self._number(reading_order(exact), "click")
+            return Route(handled=True, caption=f"{len(exact)} called {target} - say a number",
+                         speak="Which one?")
+        if self.implicit_ocr:
+            boxes = rank_text(target, self.finder.text(hwnd).lines, threshold=0.95)
+            if boxes:
+                return self._act(boxes[0], "click", command)
+        return None

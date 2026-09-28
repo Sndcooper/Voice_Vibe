@@ -60,7 +60,7 @@ class FakeFinder:
     def new_command(self) -> None:
         pass
 
-    def elements(self, hwnd: int, types=None) -> list[Element]:  # noqa: ANN001
+    def elements(self, hwnd: int, types=None, popups: bool = False) -> list[Element]:  # noqa: ANN001
         if types is None:
             return self._elements
         return [e for e in self._elements if e.control_type in types]
@@ -83,11 +83,15 @@ class FakeBadges:
 
 
 class FakeDesktop:
-    def __init__(self, front: int | None = HWND) -> None:
+    def __init__(self, front: int | None = HWND, process: str = "") -> None:
         self.front = front
+        self.app = process
 
     def foreground(self) -> int | None:
         return self.front
+
+    def process(self, hwnd: int | None) -> str:
+        return self.app
 
 
 def setup(elements=(), lines=(), confirmer=None, front=HWND, **cfg):  # noqa: ANN001, ANN003, ANN201
@@ -190,7 +194,7 @@ class TestFinderCache(unittest.TestCase):
     def test_one_walk_per_window_per_command(self) -> None:
         finder = Finder()
         calls: list[int] = []
-        finder._query = lambda hwnd, types: calls.append(hwnd) or [el(str(len(calls)))]
+        finder._query = lambda hwnd, types, popups=False: calls.append(hwnd) or [el(str(len(calls)))]
         first = finder.elements(1)
         self.assertIs(finder.elements(1), first)          # same command: cached
         finder.elements(2)                                # another window: walked
@@ -201,7 +205,7 @@ class TestFinderCache(unittest.TestCase):
     def test_types_are_cached_separately(self) -> None:
         finder = Finder()
         calls: list[tuple] = []
-        finder._query = lambda hwnd, types: calls.append(types) or []
+        finder._query = lambda hwnd, types, popups=False: calls.append(types) or []
         finder.elements(1)
         finder.elements(1, ("Hyperlink",))
         self.assertEqual(len(calls), 2)

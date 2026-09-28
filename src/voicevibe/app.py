@@ -104,7 +104,9 @@ class VoiceVibe:
         )
         self.badges = Badges(float(control.get("badge_seconds", 20.0)))
         self.router = Router(control, executor=self.executor, commands=config.commands,
-                             finder=Finder(), badges=self.badges)
+                             finder=Finder(), badges=self.badges, profiles=config.profiles)
+        # "read the answer" and profile replies speak through the SAPI voice.
+        self.executor.say = self.voice.say
         self.history = History(
             enabled=bool(config.history.get("enabled", True)),
             keep_days=int(config.history.get("keep_days", 30)),

@@ -33,11 +33,16 @@ log = logging.getLogger(__name__)
 
 # Control types a person would click. Order is also the tie-break when two
 # elements overlap: a Button inside a ListItem is the one to press.
-INTERACTIVE = ("Button", "Hyperlink", "MenuItem", "TabItem", "CheckBox", "ListItem")
+INTERACTIVE = ("Button", "SplitButton", "Hyperlink", "MenuItem", "TabItem", "CheckBox",
+               "ListItem")
 LINKS = ("Hyperlink",)
+# Text entry, for "focus prompt"-style profile steps. Not in INTERACTIVE:
+# "show numbers" tags things to click, not every text box on the page.
+FIELDS = ("Edit", "Document")
 _TYPE_IDS = {
-    "Button": 50000, "CheckBox": 50002, "Hyperlink": 50005, "ListItem": 50007,
-    "MenuItem": 50011, "TabItem": 50019,
+    "Button": 50000, "CheckBox": 50002, "Edit": 50004, "Hyperlink": 50005,
+    "ListItem": 50007, "MenuItem": 50011, "TabItem": 50019, "Document": 50030,
+    "SplitButton": 50031,
 }
 _TYPE_NAMES = {v: k for k, v in _TYPE_IDS.items()}
 # Words people add that name the kind of thing, not the thing: "the save button".
@@ -107,6 +112,37 @@ class Element:
             log.debug("UIA pattern failed on %s: %s", self.describe(), exc)
         return False
 
+    def select(self) -> bool:
+        """Select without activating. False if it cannot be selected that way.
+
+        Invoke on an Explorer file *opens* it; "delete report" must only
+        select it first.
+        """
+        if self.ref is None:
+            return False
+        try:
+            import uiautomation as auto
+
+            control = auto.Control.CreateControlFromElement(self.ref)
+            pattern = control.GetPattern(auto.PatternId.SelectionItemPattern) if control else None
+            if pattern is None:
+                return False
+            pattern.Select()
+            return True
+        except Exception as exc:
+            log.debug("UIA select failed on %s: %s", self.describe(), exc)
+            return False
+
+    def focus(self) -> bool:
+        """Give it keyboard focus, e.g. a chat app's prompt box."""
+        if self.ref is None:
+            return False
+        try:
+            self.ref.SetFocus()
+            return True
+        except Exception as exc:
+            log.debug("UIA focus failed on %s: %s", self.describe(), exc)
+            return False
 
 
 def _overlaps(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
@@ -183,11 +219,16 @@ class Finder:
             client = self._local.client = (ua, core)
         return client
 
-    def elements(self, hwnd: int, types: Iterable[str] = INTERACTIVE) -> list[Element]:
+    def elements(self, hwnd: int, types: Iterable[str] = INTERACTIVE,
+                 popups: bool = False) -> list[Element]:
+        """Clickable elements of `hwnd`, plus with `popups` those of the same
+        app's other top-level windows -- where menus and flyouts live, so a
+        "Sort" menu opened by the previous step can be found in this one.
+        """
         types = tuple(types)
-        key = (hwnd, ",".join(types), self._generation)
+        key = (hwnd, ",".join(types) + (":popups" if popups else ""), self._generation)
         if key not in self._cache:
-            self._cache[key] = self._query(hwnd, types)
+            self._cache[key] = self._query(hwnd, types, popups)
         return self._cache[key]
 
     def text(self, hwnd: int) -> Any:
@@ -201,7 +242,7 @@ class Finder:
             self._cache[key] = ocr_window(hwnd)
         return self._cache[key]
 
-    def _query(self, hwnd: int, types: tuple[str, ...]) -> list[Element]:
+    def _query(self, hwnd: int, types: tuple[str, ...], popups: bool = False) -> list[Element]:
         try:
             ua, core = self._client()
         except Exception as exc:
@@ -210,19 +251,31 @@ class Finder:
                 log.warning("UI Automation unavailable (%s); install the screen extra.", exc)
             return []
         try:
-            found = self._find_all(ua, core, hwnd, types)
+            root = ua.ElementFromHandle(hwnd)
+            found = self._find_all(ua, core, root, types)
             if len(found) <= _FEW and hwnd not in self._seen:
                 # First contact with a Chromium window wakes its tree up.
                 time.sleep(0.4)
-                found = self._find_all(ua, core, hwnd, types)
+                found = self._find_all(ua, core, root, types)
             self._seen.add(hwnd)
+            if popups:
+                for window in self._sibling_windows(ua, core, root, hwnd):
+                    found += self._find_all(ua, core, window, types, clip=False)
         except Exception as exc:
             log.debug("UIA query failed for %s: %s", hwnd, exc)
             return []
         return dedupe(found)[:MAX_ELEMENTS]
 
     @staticmethod
-    def _find_all(ua, core, hwnd: int, types: tuple[str, ...]) -> list[Element]:  # noqa: ANN001
+    def _sibling_windows(ua, core, root, hwnd: int) -> list:  # noqa: ANN001
+        """The app's other top-level UIA windows: open menus, flyouts, popups."""
+        condition = ua.CreatePropertyCondition(core.UIA_ProcessIdPropertyId, root.CurrentProcessId)
+        children = ua.GetRootElement().FindAll(core.TreeScope_Children, condition)
+        windows = [children.GetElement(i) for i in range(children.Length if children else 0)]
+        return [w for w in windows if w.CurrentNativeWindowHandle != hwnd]
+
+    @staticmethod
+    def _find_all(ua, core, root, types: tuple[str, ...], clip: bool = True) -> list[Element]:  # noqa: ANN001
         ids = [_TYPE_IDS[t] for t in types if t in _TYPE_IDS]
         condition = ua.CreatePropertyCondition(core.UIA_ControlTypePropertyId, ids[0])
         for type_id in ids[1:]:
@@ -237,7 +290,6 @@ class Finder:
                      core.UIA_BoundingRectanglePropertyId):
             request.AddProperty(prop)
 
-        root = ua.ElementFromHandle(hwnd)
         window = root.CurrentBoundingRectangle
         bounds = (window.left, window.top, window.right, window.bottom)
         found = root.FindAllBuildCache(core.TreeScope_Descendants, condition, request)
@@ -247,7 +299,10 @@ class Finder:
             r = element.CachedBoundingRectangle
             rect = (r.left, r.top, r.right, r.bottom)
             # Zero-size and scrolled-out elements report as "on screen" too.
-            if rect[2] - rect[0] < 2 or rect[3] - rect[1] < 2 or not _overlaps(rect, bounds):
+            # A popup menu may hang outside its window, so it is not clipped.
+            if rect[2] - rect[0] < 2 or rect[3] - rect[1] < 2:
+                continue
+            if clip and not _overlaps(rect, bounds):
                 continue
             out.append(Element(
                 name=str(element.CachedName or "").strip(),

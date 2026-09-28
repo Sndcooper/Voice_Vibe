@@ -117,6 +117,8 @@ DEFAULTS: dict[str, Any] = {
         "scroll_amount": 5,
         "keep_scrolling_limit": 30.0,
         "badge_seconds": 20.0,
+        "implicit_click": True,
+        "implicit_ocr": True,
         "confirm_words": ["delete", "uninstall", "send", "buy"],
         "confirm_timeout": 8.0,
         "yes_words": ["yes", "confirm"],
@@ -156,6 +158,7 @@ class Config:
     screen: dict[str, Any] = field(default_factory=dict)
     airoot: dict[str, Any] = field(default_factory=dict)
     apps: list[dict[str, Any]] = field(default_factory=list)
+    profiles: list[dict[str, Any]] = field(default_factory=list)
     replacements: list[dict[str, str]] = field(default_factory=list)
     commands: list[dict[str, str]] = field(default_factory=list)
     path: Path | None = None
@@ -215,7 +218,7 @@ def load_config(explicit: str | Path | None = None) -> Config:
         with path.open("rb") as handle:
             raw = tomllib.load(handle)
 
-    tables = ("replacements", "commands", "apps")
+    tables = ("replacements", "commands", "apps", "profiles")
     merged = _merge(DEFAULTS, {k: v for k, v in raw.items() if k not in tables})
     replacements = [
         {"find": str(item.get("find", "")), "replace": str(item.get("replace", ""))}
@@ -233,6 +236,16 @@ def load_config(explicit: str | Path | None = None) -> Config:
         }
         for item in raw.get("commands", [])
         if item.get("say") and item.get("keys")
+    ]
+    # Per-app command tables; checked (and bad phrases dropped) by profiles.py.
+    profiles = [
+        {
+            "process": str(item.get("process", "")).strip().lower(),
+            "commands": dict(item.get("commands", {})),
+            "builtin": bool(item.get("builtin", True)),
+        }
+        for item in raw.get("profiles", [])
+        if item.get("process") and isinstance(item.get("commands", {}), dict)
     ]
     apps = [
         {
@@ -259,6 +272,7 @@ def load_config(explicit: str | Path | None = None) -> Config:
         screen=merged["screen"],
         airoot=merged["airoot"],
         apps=apps,
+        profiles=profiles,
         replacements=replacements,
         commands=commands,
         path=path,

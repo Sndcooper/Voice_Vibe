@@ -240,6 +240,12 @@ keep_scrolling_limit = 30.0
 # "show numbers" / "show links" tags vanish after the next command, or after
 # this many seconds.
 badge_seconds = 20.0
+# A command that is not one of the above but exactly names something on screen
+# ("computer Downloads") clicks it. With implicit_ocr, text on screen counts
+# too -- that costs ~2s of OCR before an unrecognised command falls through
+# to dictation, so turn it off if prefixed dictation feels slow.
+implicit_click = true
+implicit_ocr = true
 # A command that mentions any of these -- in what you said, or in a step's
 # label or keys -- is read back and waits for a spoken yes before it runs.
 # Matches inside words, so "send" also covers "sending" and "resend". This cannot
@@ -251,6 +257,21 @@ confirm_timeout = 8.0
 yes_words = ["yes", "confirm"]
 # Refusal: any of these anywhere in the answer cancels at once.
 no_words = ["no", "cancel", "stop", "never mind"]
+
+# Per-app commands, used when that app is in front, before everything else.
+# Built in: explorer.exe, zen.exe (from Zen's own shortcut settings),
+# claude.exe, chatgpt.exe. A row here adds phrases to the built-in profile and
+# replaces ones it repeats; builtin = false replaces the profile entirely.
+# {name} in a phrase captures words; | separates alternatives. Steps are
+# keys, type_text, click_named, wait, scroll, first_of, say, ... (actions.py).
+# Tables must come after every [section] key they would otherwise capture, so
+# keep these below [control].
+#
+# [[profiles]]
+# process = "code.exe"
+# [profiles.commands]
+# "delete line" = { keys = "ctrl+shift+k" }
+# "go to file {name}" = [{ keys = "ctrl+p" }, { wait = 0.3 }, { type_text = "{name}" }, { keys = "enter" }]
 
 # The Airoot overlay: only the voice-reactive red logo while recording, then
 # a "Transcribing..." pill that fades away when processing finishes.
