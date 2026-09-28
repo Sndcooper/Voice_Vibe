@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 
 _SRCCOPY = 0x00CC0020
 _PW_RENDERFULLCONTENT = 0x00000002
+_DWMWA_EXTENDED_FRAME_BOUNDS = 9
 
 
 def _user32():  # noqa: ANN201
@@ -40,7 +41,19 @@ def _user32():  # noqa: ANN201
     user32.GetDC.argtypes = [wintypes.HWND]
     user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
     user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     return user32
+
+
+def _dwmapi():  # noqa: ANN201
+    dwmapi = ctypes.windll.dwmapi
+    dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long  # HRESULT, checked by hand
+    dwmapi.DwmGetWindowAttribute.argtypes = [
+        wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+    ]
+    return dwmapi
 
 
 def _gdi32():  # noqa: ANN201
@@ -117,6 +130,69 @@ def window_title(hwnd=None) -> str:  # noqa: ANN001
         return buffer.value.strip()
     except Exception:
         return ""
+
+
+def _window_rect(user32, hwnd) -> tuple[int, int, int, int] | None:  # noqa: ANN001
+    """Visible bounds of `hwnd` as (left, top, right, bottom) screen pixels.
+
+    GetWindowRect includes the invisible resize borders Windows 10+ draws
+    around every window, so the DWM frame bounds are asked for first.
+    """
+    rect = wintypes.RECT()
+    try:
+        hr = _dwmapi().DwmGetWindowAttribute(
+            hwnd, _DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(rect), ctypes.sizeof(rect)
+        )
+        if hr == 0:
+            return rect.left, rect.top, rect.right, rect.bottom
+    except Exception:
+        pass
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    return rect.left, rect.top, rect.right, rect.bottom
+
+
+def _process_name(pid: int) -> str:
+    """Executable name of `pid`, or "" if it is gone or not ours to inspect."""
+    if not pid:
+        return ""
+    try:
+        import psutil
+
+        return psutil.Process(pid).name()
+    except Exception:
+        # ImportError, NoSuchProcess, and AccessDenied (elevated processes) all
+        # mean the same thing to a caller: the name is unknown.
+        return ""
+
+
+def window_info(hwnd=None) -> dict | None:  # noqa: ANN001
+    """Identity and position of the foreground window, or of `hwnd` if given.
+
+    Returns {"hwnd", "title", "process_name", "rect"}, with rect as
+    (left, top, right, bottom), or None when there is no window to describe.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        user32 = _user32()
+        hwnd = hwnd or user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        rect = _window_rect(user32, hwnd)
+        if rect is None:
+            return None
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return {
+            "hwnd": hwnd,
+            "title": window_title(hwnd),
+            "process_name": _process_name(pid.value),
+            "rect": rect,
+        }
+    except Exception as exc:
+        log.debug("window info failed: %s", exc)
+        return None
 
 
 def selected_text(timeout: float = 0.35) -> str:

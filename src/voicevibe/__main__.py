@@ -60,6 +60,30 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def enable_dpi_awareness() -> None:
+    """Opt out of Windows DPI virtualisation before any window exists.
+
+    An unaware process is lied to on scaled displays: window rects and screen
+    metrics come back in 96-DPI units, and its own windows are bitmap-stretched
+    and blurry. Per-monitor awareness makes every coordinate a physical pixel.
+    Setting it fails harmlessly if a manifest or host already chose a mode.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+        return
+    except (AttributeError, OSError):
+        pass
+    # shcore is Windows 8.1+; this older call gives system-wide awareness.
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except (AttributeError, OSError):
+        pass
+
+
 def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     handlers: list[logging.Handler] = []
@@ -256,6 +280,7 @@ def say(config: Config, text: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    enable_dpi_awareness()
     args = build_parser().parse_args(argv)
     setup_logging(args.verbose)
 
