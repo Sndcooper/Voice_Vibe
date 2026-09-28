@@ -64,6 +64,43 @@ class FakeController:
         return _Held()
 
 
+class FakeButton:
+    """Stands in for pynput.mouse.Button; members are read by name."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __repr__(self) -> str:
+        return f"Button.{self.name}"
+
+
+for _name in ("left", "right", "middle"):
+    setattr(FakeButton, _name, FakeButton(_name))
+
+
+class FakeMouse:
+    """Records pointer moves, clicks and scrolls instead of making them."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[object, ...]] = []
+        self._position = (0, 0)
+
+    @property
+    def position(self) -> tuple[int, int]:
+        return self._position
+
+    @position.setter
+    def position(self, value: tuple[int, int]) -> None:
+        self._position = value
+        self.events.append(("move", *value))
+
+    def click(self, button: object, count: int = 1) -> None:
+        self.events.append(("click", button, count))
+
+    def scroll(self, dx: int, dy: int) -> None:
+        self.events.append(("scroll", dx, dy))
+
+
 class FakeListener:
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.daemon = False
@@ -103,10 +140,16 @@ def install() -> None:
         keyboard.Controller = FakeController
         keyboard.Listener = FakeListener
 
+        mouse = types.ModuleType("pynput.mouse")
+        mouse.Button = FakeButton
+        mouse.Controller = FakeMouse
+
         pynput = types.ModuleType("pynput")
         pynput.keyboard = keyboard
+        pynput.mouse = mouse
         sys.modules["pynput"] = pynput
         sys.modules["pynput.keyboard"] = keyboard
+        sys.modules["pynput.mouse"] = mouse
 
     if "pyperclip" not in sys.modules:
         clipboard = types.ModuleType("pyperclip")
