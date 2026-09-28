@@ -13,6 +13,7 @@ import numpy as np
 from .airoot import AirootBridge
 from .audio import Recorder, SegmentRecorder
 from .config import Config
+from .control import Router
 from .feedback import Beeper, Tray
 from .history import History, data_dir
 from .hotkey import HotkeyListener
@@ -74,6 +75,7 @@ class VoiceVibe:
             screen=ScreenReader(config.screen),
             cfg=assistant,
         )
+        self.router = Router(config.control)
         self.beeper = Beeper(bool(config.feedback.get("sounds", True)))
         self.tray = Tray(bool(config.feedback.get("tray_icon", True)), self.request_stop)
         self.overlay = Overlay(config.overlay)
@@ -250,6 +252,12 @@ class VoiceVibe:
             )
         self._indicate(self._session_tray())
 
+    def _command_hint(self) -> str:
+        if not self.router.enabled:
+            return "off"
+        prefixes = [" ".join(p) for p in self.router.prefix.phrases]
+        return "in a session, start with " + " / ".join(f'"{p}"' for p in prefixes[:3])
+
     def _phrase_hint(self) -> str:
         phrases = list(self.config.wake.get("phrases", []))
         return " / ".join(f'"{p}"' for p in phrases[:3]) or '"arise"'
@@ -342,7 +350,7 @@ class VoiceVibe:
     def _do_session(self, text: str, elapsed: float) -> None:
         """One utterance from a session, routed by the wake state."""
         if not self.wake_enabled:
-            self._do_insert(text, elapsed)
+            self._do_command_or_insert(text, elapsed)
             return
 
         if self._wake_state == ARMED:
@@ -370,9 +378,29 @@ class VoiceVibe:
             return
 
         self._ends_dictation = False
-        self._do_insert(text, elapsed)
+        self._do_command_or_insert(text, elapsed)
         if self._ends_dictation:
             self._arm("submitted")
+
+    def _do_command_or_insert(self, text: str, elapsed: float) -> None:
+        """Offer a prefixed utterance to the router; type everything else.
+
+        An unhandled command is typed exactly as heard, prefix included, so
+        [control] never loses words the user meant as dictation.
+        """
+        command = self.router.split(text)
+        if command is not None:
+            route = self.router.route(command)
+            if route.handled:
+                log.info("[%.2fs] -> command | %s", elapsed, command.strip())
+                self.history.add(action="command", heard=text.strip(),
+                                 seconds=round(elapsed, 2))
+                self.overlay.show(route.caption or command.strip())
+                self._ends_dictation = route.ends_dictation
+                self.beeper.done()
+                return
+            log.debug("Command not handled, dictating instead: %s", command.strip())
+        self._do_insert(text, elapsed)
 
     def _do_insert(self, text: str, elapsed: float) -> None:
         target = focused_window() or "unknown window"
@@ -548,6 +576,7 @@ class VoiceVibe:
             f"  output   {self.config.output.get('mode')} into the focused field",
             f"  replies  {'on' if self.responder.enabled else 'off'}"
             f"  ({len(self.responder.launcher.names())} apps, screen: {screen})",
+            f"  commands {self._command_hint()}",
             f"  config   {self.config.path or 'defaults'}",
             f"  data     {data_dir()}",
             "",

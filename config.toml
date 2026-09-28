@@ -208,6 +208,15 @@ speak_replies = true
 # -10 (slowest) to 10 (fastest).
 voice_rate = 1
 
+# Spoken commands inside a session: start an utterance with a prefix word
+# ("computer, ...") to aim it at the computer instead of the cursor. The prefix
+# must come first; "the computer is slow" is still typed. In a wake-word session
+# it works once woken. No commands exist yet, so anything prefixed is typed as
+# heard, prefix included.
+[control]
+enabled = false
+prefixes = ["computer"]
+
 # The Airoot overlay: only the voice-reactive red logo while recording, then
 # a "Transcribing..." pill that fades away when processing finishes.
 # It is a separate app; Voice Vibe preloads it hidden and shows it the moment

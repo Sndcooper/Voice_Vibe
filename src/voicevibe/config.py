@@ -111,6 +111,10 @@ DEFAULTS: dict[str, Any] = {
         "speak_replies": True,
         "voice_rate": 1,
     },
+    "control": {
+        "enabled": False,
+        "prefixes": ["computer"],
+    },
     "airoot": {
         "enabled": False,
         "exe": "",
@@ -141,6 +145,7 @@ class Config:
     overlay: dict[str, Any] = field(default_factory=dict)
     history: dict[str, Any] = field(default_factory=dict)
     assistant: dict[str, Any] = field(default_factory=dict)
+    control: dict[str, Any] = field(default_factory=dict)
     screen: dict[str, Any] = field(default_factory=dict)
     airoot: dict[str, Any] = field(default_factory=dict)
     apps: list[dict[str, Any]] = field(default_factory=list)
@@ -243,6 +248,7 @@ def load_config(explicit: str | Path | None = None) -> Config:
         overlay=merged["overlay"],
         history=merged["history"],
         assistant=merged["assistant"],
+        control=merged["control"],
         screen=merged["screen"],
         airoot=merged["airoot"],
         apps=apps,
