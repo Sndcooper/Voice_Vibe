@@ -14,8 +14,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .wake import _LEADING, _WORD, PhraseMatcher
+
+if TYPE_CHECKING:
+    from .actions import Executor
 
 log = logging.getLogger(__name__)
 
@@ -34,9 +38,12 @@ NOT_HANDLED = Route()
 
 
 class Router:
-    def __init__(self, cfg: dict | None = None) -> None:
+    def __init__(self, cfg: dict | None = None, executor: Executor | None = None) -> None:
         cfg = cfg or {}
         self.enabled = bool(cfg.get("enabled", False))
+        # What route() will drive once it knows commands. Confirmation of
+        # dangerous steps lives in the executor, so no command can skip it.
+        self.executor = executor
         prefixes = cfg.get("prefixes", ["computer"])
         if isinstance(prefixes, str):
             prefixes = [prefixes]

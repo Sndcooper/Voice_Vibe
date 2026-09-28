@@ -114,6 +114,10 @@ DEFAULTS: dict[str, Any] = {
     "control": {
         "enabled": False,
         "prefixes": ["computer"],
+        "confirm_words": ["delete", "uninstall", "send", "buy"],
+        "confirm_timeout": 8.0,
+        "yes_words": ["yes", "confirm"],
+        "no_words": ["no", "cancel", "stop", "never mind"],
     },
     "airoot": {
         "enabled": False,

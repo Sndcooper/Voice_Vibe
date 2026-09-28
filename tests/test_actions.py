@@ -19,12 +19,15 @@ stubs.install()
 from voicevibe import actions  # noqa: E402
 from voicevibe.actions import (  # noqa: E402
     ActionError,
+    Cancelled,
     Click,
+    Confirm,
     Executor,
     Keys,
     Scroll,
     TypeText,
     parse,
+    trigger_pattern,
 )
 from voicevibe.inserter import Key  # noqa: E402
 
@@ -222,6 +225,179 @@ class TestSending(unittest.TestCase):
             executor.run({"keys": "ctrl+t"})
         self.assertEqual(executor.keyboard.events[-1], ("release", Key.ctrl))
         self.assertEqual(executor.performed, [])
+
+
+class Answers:
+    """A Confirmer that replies from a script and remembers what it was asked."""
+
+    def __init__(self, *replies: object) -> None:
+        self.replies = list(replies)
+        self.asked: list[tuple[str, float]] = []
+
+    def __call__(self, prompt: str, timeout: float) -> object:
+        self.asked.append((prompt, timeout))
+        reply = self.replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+
+def gated(confirmer: Answers | None, **kwargs) -> Executor:  # noqa: ANN003
+    return Executor(keyboard=stubs.FakeController(), mouse=stubs.FakeMouse(),
+                    step_delay=0, type_delay=0, confirmer=confirmer, **kwargs)
+
+
+def typed(executor: Executor) -> str:
+    return "".join(e[1] for e in executor.keyboard.events if e[0] == "type")
+
+
+class TestConfirmation(unittest.TestCase):
+    """A gated step runs only on an explicit yes; everything else cancels."""
+
+    SEND = [
+        {"type_text": "hello"},
+        {"click": [900, 40], "label": "send the message", "confirm": True},
+        {"type_text": "after"},
+    ]
+
+    def test_yes_runs_the_gated_step(self) -> None:
+        answers = Answers(True)
+        executor = gated(answers, confirm_timeout=5)
+        executor.run(self.SEND)
+        self.assertEqual(answers.asked, [("send the message", 5.0)])
+        self.assertEqual(executor.mouse.events[0], ("move", 900, 40))
+        self.assertEqual(typed(executor), "helloafter")
+
+    def test_no_stops_before_the_gated_step(self) -> None:
+        executor = gated(Answers(False))
+        with self.assertRaises(Cancelled) as caught:
+            executor.run(self.SEND)
+        self.assertEqual(caught.exception.prompt, "send the message")
+        # The step before the gate ran; the gated one and everything after did not.
+        self.assertEqual(typed(executor), "hello")
+        self.assertEqual(executor.mouse.events, [])
+        self.assertEqual(executor.performed, [TypeText("hello")])
+
+    def test_anything_but_true_is_no(self) -> None:
+        for reply in (None, 1, "yes", RuntimeError("mic gone")):
+            with self.subTest(reply=reply):
+                executor = gated(Answers(reply))
+                with self.assertRaises(Cancelled), self.assertLogs("voicevibe.actions"):
+                    executor.run({"keys": "enter", "confirm": True})
+                self.assertEqual(executor.keyboard.events, [])
+
+    def test_without_a_confirmer_gated_steps_never_run(self) -> None:
+        executor = gated(None)
+        with self.assertRaises(Cancelled):
+            executor.run({"keys": "enter", "confirm": True})
+        self.assertEqual(executor.keyboard.events, [])
+
+    def test_ungated_specs_never_ask(self) -> None:
+        answers = Answers()
+        gated(answers).run([{"keys": "ctrl+t"}, {"type_text": "news"}, {"scroll": "down"}])
+        self.assertEqual(answers.asked, [])
+
+    def test_confirm_can_be_the_question(self) -> None:
+        answers = Answers(True)
+        gated(answers).run({"keys": "ctrl+enter", "confirm": "Post this comment?"})
+        self.assertEqual(answers.asked[0][0], "Post this comment?")
+
+    def test_the_prompt_falls_back_to_describing_the_step(self) -> None:
+        answers = Answers(True)
+        gated(answers).run({"click": [1, 2], "confirm": True})
+        self.assertEqual(answers.asked[0][0], "click left at (1, 2)")
+
+    def test_a_confirmed_sequence_asks_once_before_all_of_it(self) -> None:
+        answers = Answers(True)
+        spec = {"sequence": [{"keys": "ctrl+a"}, {"keys": "backspace"}], "confirm": True}
+        self.assertEqual(gated(answers).plan(spec)[0], Confirm("keys ctrl+a; keys backspace"))
+        executor = gated(answers)
+        executor.run(spec)
+        self.assertEqual(len(answers.asked), 1)
+
+    def test_an_empty_confirmed_sequence_asks_nothing(self) -> None:
+        self.assertEqual(parse({"sequence": [], "confirm": True}), [])
+
+    def test_dry_run_records_the_gate_without_asking(self) -> None:
+        answers = Answers()
+        executor = Executor(dry_run=True, confirmer=answers)
+        steps = executor.run({"keys": "enter", "label": "submit", "confirm": True})
+        self.assertEqual(steps, [Confirm("submit"), Keys("enter")])
+        self.assertEqual(answers.asked, [])
+
+    def test_bad_options_are_rejected(self) -> None:
+        for spec in (
+            {"keys": "a", "confirm": "yes please", "label": 3},
+            {"keys": "a", "confirm": 1},
+            {"label": "just a label"},
+            {"confirm": True},
+        ):
+            with self.subTest(spec=spec), self.assertRaises(ActionError):
+                parse(spec)
+
+
+class TestTriggerWords(unittest.TestCase):
+    """Trigger words force a gate even when the spec did not ask for one."""
+
+    def test_defaults(self) -> None:
+        pattern = trigger_pattern(actions.DEFAULT_CONFIRM_WORDS)
+        for label in ("delete the file", "Uninstall Blender", "send", "Buy now",
+                      "sending it", "resend the invite", "buyer checkout"):
+            with self.subTest(label=label):
+                self.assertTrue(parse({"click": [1, 1], "label": label}, pattern)[0].forced_by)
+        for label in ("open the file", "scroll the page", "reply", ""):
+            with self.subTest(label=label):
+                self.assertEqual(parse({"click": [1, 1], "label": label}, pattern), [Click(1, 1)])
+
+    def test_label_forces_confirmation(self) -> None:
+        answers = Answers(False)
+        executor = gated(answers)
+        with self.assertRaises(Cancelled):
+            executor.run({"click": [5, 5], "label": "Buy now"})
+        self.assertEqual(answers.asked[0][0], "Buy now")
+        self.assertEqual(executor.mouse.events, [])
+
+    def test_confirm_false_does_not_override_a_trigger(self) -> None:
+        answers = Answers(False)
+        executor = gated(answers)
+        with self.assertRaises(Cancelled):
+            executor.run({"click": [5, 5], "label": "delete account", "confirm": False})
+        self.assertEqual(executor.mouse.events, [])
+
+    def test_keys_can_trigger(self) -> None:
+        # shift+delete skips the Recycle Bin: nobody labelled it, it still asks.
+        steps = gated(Answers()).plan({"keys": "shift+delete"})
+        self.assertEqual(steps, [Confirm("keys shift+delete", "delete"), Keys("shift+delete")])
+
+    def test_typed_text_does_not_trigger(self) -> None:
+        # Typing the word "send" into a document sends nothing.
+        self.assertEqual(gated(Answers()).plan({"type_text": "please send the report"}),
+                         [TypeText("please send the report")])
+
+    def test_the_spoken_command_gates_the_whole_spec(self) -> None:
+        answers = Answers(False)
+        executor = gated(answers)
+        with self.assertRaises(Cancelled):
+            executor.run([{"keys": "ctrl+a"}, {"keys": "enter"}], command="send it to everyone")
+        self.assertEqual(answers.asked[0][0], "send it to everyone")
+        self.assertEqual(executor.keyboard.events, [])
+
+    def test_adjacent_gates_become_one_question(self) -> None:
+        answers = Answers(True)
+        executor = gated(answers)
+        executor.run({"click": [1, 1], "label": "send email"}, command="send the email")
+        self.assertEqual(answers.asked, [("send the email; send email", 8.0)])
+
+    def test_words_are_configurable(self) -> None:
+        executor = gated(Answers(), confirm_words=["publish"])
+        self.assertIsInstance(executor.plan({"keys": "enter", "label": "publish post"})[0], Confirm)
+        self.assertEqual(executor.plan({"keys": "enter", "label": "send"}), [Keys("enter")])
+
+    def test_an_empty_list_leaves_only_explicit_gates(self) -> None:
+        executor = gated(Answers(), confirm_words=[])
+        self.assertEqual(executor.plan({"keys": "shift+delete"}, command="delete"),
+                         [Keys("shift+delete")])
+        self.assertIsInstance(executor.plan({"keys": "enter", "confirm": True})[0], Confirm)
 
 
 if __name__ == "__main__":

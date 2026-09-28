@@ -12,7 +12,9 @@ import numpy as np
 
 from .airoot import AirootBridge
 from .audio import Recorder, SegmentRecorder
+from .actions import DEFAULT_CONFIRM_TIMEOUT, DEFAULT_CONFIRM_WORDS, Executor
 from .config import Config
+from .confirm import DEFAULT_NO, DEFAULT_YES, VoiceConfirmer
 from .control import Router
 from .feedback import Beeper, Tray
 from .history import History, data_dir
@@ -75,7 +77,6 @@ class VoiceVibe:
             screen=ScreenReader(config.screen),
             cfg=assistant,
         )
-        self.router = Router(config.control)
         self.beeper = Beeper(bool(config.feedback.get("sounds", True)))
         self.tray = Tray(bool(config.feedback.get("tray_icon", True)), self.request_stop)
         self.overlay = Overlay(config.overlay)
@@ -83,6 +84,24 @@ class VoiceVibe:
         # The overlay meters the same microphone dictation records from,
         # rather than whatever Windows has as the default.
         self.airoot.set_device(config.input_device)
+
+        control = config.control
+        timeout = float(control.get("confirm_timeout", DEFAULT_CONFIRM_TIMEOUT))
+        self.confirmer = VoiceConfirmer(
+            transcribe=lambda audio: self.transcriber.transcribe(audio) if self.transcriber else "",
+            say=lambda text: self.voice.say(text, block=True),
+            show=lambda text: self._show_question(text, timeout),
+            # Answers arrive through the session; with it closed, none can.
+            listening=lambda: self.session.is_recording,
+            yes_words=control.get("yes_words", DEFAULT_YES),
+            no_words=control.get("no_words", DEFAULT_NO),
+        )
+        self.executor = Executor(
+            confirmer=self.confirmer,
+            confirm_words=control.get("confirm_words", DEFAULT_CONFIRM_WORDS),
+            confirm_timeout=timeout,
+        )
+        self.router = Router(control, executor=self.executor)
         self.history = History(
             enabled=bool(config.history.get("enabled", True)),
             keep_days=int(config.history.get("keep_days", 30)),
@@ -202,7 +221,16 @@ class VoiceVibe:
         Nothing slow belongs here: rendering the tray icon from this thread
         stalls PortAudio and drops the next block. The worker sets the state.
         """
+        # While a confirmation is open the worker is blocked waiting for the
+        # answer, so the answer has to go to it directly rather than queue
+        # behind it -- and must not be typed as dictation.
+        if self.confirmer.offer(audio):
+            return
         self._jobs.put((audio, SESSION))
+
+    def _show_question(self, text: str, seconds: float) -> None:
+        self.overlay.show(text, seconds=seconds)
+        self.airoot.show_transcript(text, "Confirm")
 
     def _session_tray(self) -> str:
         if not self.session.is_recording:

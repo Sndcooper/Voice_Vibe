@@ -216,6 +216,17 @@ voice_rate = 1
 [control]
 enabled = false
 prefixes = ["computer"]
+# A command that mentions any of these -- in what you said, or in a step's
+# label or keys -- is read back and waits for a spoken yes before it runs.
+# Matches inside words, so "send" also covers "sending" and "resend". This cannot
+# be switched off per command: a step marked confirm = false is still asked.
+confirm_words = ["delete", "uninstall", "send", "buy"]
+# Seconds to answer. Silence, or anything but a yes, cancels.
+confirm_timeout = 8.0
+# Consent: the whole answer must be these words ("yes", "yes, confirm").
+yes_words = ["yes", "confirm"]
+# Refusal: any of these anywhere in the answer cancels at once.
+no_words = ["no", "cancel", "stop", "never mind"]
 
 # The Airoot overlay: only the voice-reactive red logo while recording, then
 # a "Transcribing..." pill that fades away when processing finishes.
