@@ -25,6 +25,7 @@ from dataclasses import dataclass
 log = logging.getLogger(__name__)
 
 _SRCCOPY = 0x00CC0020
+_PW_CLIENTONLY = 0x00000001
 _PW_RENDERFULLCONTENT = 0x00000002
 _DWMWA_EXTENDED_FRAME_BOUNDS = 9
 
@@ -283,7 +284,11 @@ def focused_element_text() -> str:
 
 
 def capture_window(hwnd=None):  # noqa: ANN001, ANN201
-    """Bitmap of the foreground window as a PIL image. No new dependencies."""
+    """Client area of the foreground window as a PIL image. No new dependencies.
+
+    Pixel (0, 0) is the client area's top-left, so client_origin() maps any
+    point in the image to the screen.
+    """
     if sys.platform != "win32":
         return None
     try:
@@ -310,7 +315,9 @@ def capture_window(hwnd=None):  # noqa: ANN001, ANN201
     try:
         old = gdi32.SelectObject(memory_dc, bitmap)
         # PrintWindow handles layered/DWM-composited windows that BitBlt misses.
-        if not user32.PrintWindow(hwnd, memory_dc, _PW_RENDERFULLCONTENT):
+        # CLIENTONLY matters: without it the frame is drawn into this
+        # client-sized bitmap too, shifting everything by the border width.
+        if not user32.PrintWindow(hwnd, memory_dc, _PW_CLIENTONLY | _PW_RENDERFULLCONTENT):
             gdi32.BitBlt(memory_dc, 0, 0, width, height, window_dc, 0, 0, _SRCCOPY)
 
         buffer = ctypes.create_string_buffer(width * height * 4)
