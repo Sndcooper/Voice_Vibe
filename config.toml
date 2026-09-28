@@ -56,6 +56,14 @@ vad_filter = false
 log_prob_threshold = -1.0
 # Bias the decoder toward your vocabulary. Keep it short.
 initial_prompt = ""
+# A second, small model for short command-like utterances: wake checks while
+# waiting, confirmation answers, numbers, "stop", and a first pass over short
+# utterances when [control] is on (if it hears no command prefix, the model
+# above transcribes it again, so dictation keeps full accuracy). "auto" is
+# base.en, skipped when the model above is no bigger; "" turns it off.
+command_model = "auto"
+# Utterances up to this long get the command model's first pass. 0 disables it.
+command_max_seconds = 3.0
 
 [audio]
 sample_rate = 16000

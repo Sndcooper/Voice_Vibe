@@ -25,7 +25,7 @@ from .launcher import Launcher
 from .overlay import Badges, Overlay
 from .screen import ScreenReader
 from .speaker import Speaker, SpeechUnavailable, SystemVoice
-from .transcriber import Transcriber
+from .transcriber import Transcriber, choose_command_model
 from .uia import Finder
 from .vocab import Vocabulary
 from .winctl import front_process
@@ -48,6 +48,8 @@ class VoiceVibe:
     # construct one piecemeal) behaves as the plain Whisper path.
     detector: WakeWordDetector | None = None
     _confirm_wake = False
+    # Small Whisper for short command-like utterances; None = use the main one.
+    command_transcriber: Transcriber | None = None
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -97,7 +99,11 @@ class VoiceVibe:
         control = config.control
         timeout = float(control.get("confirm_timeout", DEFAULT_CONFIRM_TIMEOUT))
         self.confirmer = VoiceConfirmer(
-            transcribe=lambda audio: self.transcriber.transcribe(audio) if self.transcriber else "",
+            # Answers are one or two words: the command model if there is one.
+            transcribe=lambda audio: (
+                (self.command_transcriber or self.transcriber).transcribe(audio)
+                if self.transcriber else ""
+            ),
             say=lambda text: self.voice.say(text, block=True),
             show=lambda text: self._show_question(text, timeout),
             # Answers arrive through the session; with it closed, none can.
@@ -424,14 +430,9 @@ class VoiceVibe:
             try:
                 if visible_job:
                     self._indicate("busy")
-                if self.transcriber is not None:
-                    # Per utterance: the front app may have changed since the last.
-                    armed = not visible_job
-                    self.transcriber.initial_prompt = self._decoder_prompt(
-                        armed, "" if armed else front_process()
-                    )
+                armed = not visible_job
                 started = time.perf_counter()
-                text = self.transcriber.transcribe(audio) if self.transcriber else ""
+                text = self._transcribe_job(audio, action, armed)
                 elapsed = time.perf_counter() - started
                 if not text:
                     if visible_job:
@@ -455,6 +456,54 @@ class VoiceVibe:
             finally:
                 # Don't blank the indicator while the mic is still open.
                 self._indicate(self._session_tray())
+
+    def _transcribe_job(self, audio: np.ndarray, action: str, armed: bool) -> str:
+        """Transcribe with the model that fits the utterance.
+
+        The command model takes what is predictably short and command-like:
+        wake checks, answers the router is waiting for, and -- as a first
+        pass -- short session utterances when commands are on. If that first
+        pass does not hear the prefix, the dictation model transcribes it
+        again, so dictation is never left with the small model's text.
+        """
+        if self.transcriber is None:
+            return ""
+        prompt = self._decoder_prompt(armed, "" if armed else front_process())
+        fast = self.command_transcriber
+        for model in (self.transcriber, fast):
+            if model is not None:
+                model.initial_prompt = prompt
+        if fast is None:
+            return self.transcriber.transcribe(audio)
+        if armed or self.router.expects_command():
+            return fast.transcribe(audio)
+        limit = float(self.config.model.get("command_max_seconds", 3.0) or 0)
+        seconds = len(audio) / int(self.config.audio["sample_rate"])
+        if action == SESSION and self.router.enabled and seconds <= limit:
+            text = fast.transcribe(audio)
+            if self.router.split(text) is not None:
+                return text
+            log.debug("Short utterance was not a command; dictation model retries.")
+        return self.transcriber.transcribe(audio)
+
+    def _load_command_model(self) -> None:
+        name = choose_command_model(
+            str(self.config.model.get("command_model", "auto")),
+            self.transcriber.model_name,
+            self.config.model.get("language", "en"),
+        )
+        if name is None:
+            return
+        try:
+            cfg = {**self.config.model, "name": name, "beam_size": 1,
+                   "device": self.transcriber.device}
+            self.command_transcriber = Transcriber(cfg)
+            self.command_transcriber.hotwords = self.transcriber.hotwords
+            self.command_transcriber.warmup(int(self.config.audio["sample_rate"]))
+        except Exception as exc:
+            log.warning("Command model %s unavailable (%s); using %s for everything.",
+                        name, exc, self.transcriber.model_name)
+            self.command_transcriber = None
 
     def _do_session(self, text: str, elapsed: float) -> None:
         """One utterance from a session, routed by the wake state."""
@@ -647,6 +696,9 @@ class VoiceVibe:
         self.transcriber.hotwords = self.vocab.hotwords_text()
         self._set_wake_bias(False)
         self.transcriber.warmup(int(self.config.audio["sample_rate"]))
+        # After warmup: a failed GPU warmup moves the main model to CPU, and
+        # the command model should follow it there.
+        self._load_command_model()
         if self.wake_enabled and str(self.config.wake.get("engine", "whisper")).lower() == "openwakeword":
             self._start_wake_model()
 

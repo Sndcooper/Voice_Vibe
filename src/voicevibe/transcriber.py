@@ -26,6 +26,36 @@ MODEL_ALIASES = {
 }
 
 
+_SIZES = ("tiny", "base", "small", "medium")
+
+
+def model_size(name: str) -> int:
+    """Rough size rank: tiny 0, base 1, small 2, medium 3, anything large 4."""
+    lowered = name.lower()
+    for rank, size in enumerate(_SIZES):
+        if size in lowered and "large" not in lowered:
+            return rank
+    return len(_SIZES)
+
+
+def choose_command_model(setting: str, main_model: str, language: str | None) -> str | None:
+    """Which model to load for commands, or None to use the main one.
+
+    "auto" means base.en (base for other languages): accurate enough for
+    short fixed phrases and several times faster than a dictation-sized
+    model. Not worth a second load when the main model is no bigger.
+    """
+    setting = (setting or "").strip()
+    if setting.lower() in ("", "none", "off", "false"):
+        return None
+    if setting.lower() == "auto":
+        english = (language or "").lower() in ("en", "english")
+        setting = "base.en" if english else "base"
+    if model_size(main_model) <= model_size(setting):
+        return None
+    return setting
+
+
 def memory_gb() -> tuple[float, float]:
     """(total, free) system RAM in GB. Zeros if it cannot be determined."""
     if sys.platform == "win32":

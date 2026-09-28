@@ -55,6 +55,8 @@ DEFAULTS: dict[str, Any] = {
         "vad_filter": False,
         "log_prob_threshold": -1.0,
         "initial_prompt": "",
+        "command_model": "auto",
+        "command_max_seconds": 3.0,
     },
     "audio": {
         "sample_rate": 16000,

@@ -251,6 +251,12 @@ class Router:
     def stop(self) -> bool:
         return self.repeater.stop()
 
+    def expects_command(self) -> bool:
+        """The next utterance is almost surely a command: a number while tags
+        are up, "next one", "stop" while scrolling. Lets the app use its fast
+        command model for it."""
+        return self._numbers_up() or self.repeater.running or bool(self._others)
+
     @staticmethod
     def _load_user_commands(commands: list[dict]) -> dict[str, dict]:
         """[[commands]] rows, by spoken phrase. They win over built-ins."""
