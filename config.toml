@@ -225,6 +225,9 @@ voice_rate = 1
 #            move to other monitor, show desktop, switch to <app or title>
 #   system   volume up/down [N], louder, quieter, mute, play/pause, next/previous
 #            track, screenshot, clipboard, lock (asks first)
+#   screen   click / double click / right click / hover <name>, next one,
+#            show numbers, show links, click <number>, hide numbers
+#            (needs the screen extra: uv pip install -e ".[screen]")
 # A [[commands]] row whose `say` matches a command replaces the built-in one,
 # e.g. say = "delete line", keys = "ctrl+shift+k" for VS Code.
 [control]
@@ -234,6 +237,9 @@ prefixes = ["computer"]
 scroll_amount = 5
 # "keep scrolling" stops by itself after this many seconds.
 keep_scrolling_limit = 30.0
+# "show numbers" / "show links" tags vanish after the next command, or after
+# this many seconds.
+badge_seconds = 20.0
 # A command that mentions any of these -- in what you said, or in a step's
 # label or keys -- is read back and waits for a spoken yes before it runs.
 # Matches inside words, so "send" also covers "sending" and "resend". This cannot

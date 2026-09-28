@@ -296,73 +296,7 @@ class Overlay:
             pass
 
     def _create_window(self) -> None:
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
-
-        # Without an explicit restype the HWND is truncated to 32 bits on x64.
-        user32.CreateWindowExW.restype = wintypes.HWND
-        user32.CreateWindowExW.argtypes = [
-            wintypes.DWORD,
-            wintypes.LPCWSTR,
-            wintypes.LPCWSTR,
-            wintypes.DWORD,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            wintypes.HWND,
-            wintypes.HMENU,
-            wintypes.HINSTANCE,
-            wintypes.LPVOID,
-        ]
-        user32.DefWindowProcW.restype = ctypes.c_longlong
-        # Without argtypes ctypes guesses int for LPARAM and overflows on x64.
-        user32.DefWindowProcW.argtypes = [
-            wintypes.HWND,
-            wintypes.UINT,
-            wintypes.WPARAM,
-            wintypes.LPARAM,
-        ]
-
-        def wndproc(hwnd, message, wparam, lparam):  # noqa: ANN001
-            if message == _WM_DESTROY:
-                return 0
-            return user32.DefWindowProcW(hwnd, message, wparam, lparam)
-
-        self._wndproc_ref = _WNDPROC(wndproc)
-        instance = kernel32.GetModuleHandleW(None)
-        class_name = f"VoiceVibeOrb{id(self)}"
-
-        wndclass = _WndClassEx()
-        wndclass.cbSize = ctypes.sizeof(_WndClassEx)
-        wndclass.style = 0
-        wndclass.lpfnWndProc = ctypes.cast(self._wndproc_ref, ctypes.c_void_p)
-        wndclass.hInstance = instance
-        wndclass.lpszClassName = class_name
-        if not user32.RegisterClassExW(ctypes.byref(wndclass)):
-            raise ctypes.WinError()
-
-        self._hwnd = user32.CreateWindowExW(
-            _WS_EX_LAYERED
-            | _WS_EX_TRANSPARENT
-            | _WS_EX_TOPMOST
-            | _WS_EX_TOOLWINDOW
-            | _WS_EX_NOACTIVATE,
-            class_name,
-            "Voice Vibe",
-            _WS_POPUP,
-            0,
-            0,
-            10,
-            10,
-            None,
-            None,
-            instance,
-            None,
-        )
-        if not self._hwnd:
-            raise ctypes.WinError()
-        user32.ShowWindow(self._hwnd, _SW_SHOWNOACTIVATE)
+        self._hwnd, self._wndproc_ref = _create_layered_window("VoiceVibeOrb", "Voice Vibe")
 
     def _origin(self, width: int, height: int) -> tuple[int, int]:
         user32 = ctypes.windll.user32
@@ -378,60 +312,264 @@ class Overlay:
         return screen_w - width - margin, screen_h - height - margin
 
     def _paint(self, image: Image.Image) -> None:
-        user32 = ctypes.windll.user32
-        gdi32 = ctypes.windll.gdi32
         width, height = image.size
+        _blit(self._hwnd, image, *self._origin(width, height), opacity=self.opacity)
 
-        # UpdateLayeredWindow wants premultiplied BGRA.
-        rgba = np.asarray(image, dtype=np.uint8)
-        alpha = rgba[:, :, 3].astype(np.uint16)
-        rgb = (rgba[:, :, :3].astype(np.uint16) * alpha[:, :, None] // 255).astype(np.uint8)
-        bgra = np.dstack([rgb[:, :, ::-1], rgba[:, :, 3]])
-        if self.opacity < 1.0:
-            bgra = (bgra.astype(np.uint16) * self.opacity).astype(np.uint8)
-        buffer = np.ascontiguousarray(bgra).tobytes()
 
-        header = _BitmapInfoHeader()
-        header.biSize = ctypes.sizeof(_BitmapInfoHeader)
-        header.biWidth = width
-        header.biHeight = -height  # negative means top-down, matching PIL row order
-        header.biPlanes = 1
-        header.biBitCount = 32
-        header.biCompression = 0
+# ------------------------------------------------------------ shared win32
+def _create_layered_window(class_prefix: str, title: str):  # noqa: ANN202
+    """A click-through, topmost, never-focused popup. Returns (hwnd, wndproc).
 
-        screen_dc = user32.GetDC(None)
-        memory_dc = gdi32.CreateCompatibleDC(screen_dc)
-        bits = ctypes.c_void_p()
-        bitmap = gdi32.CreateDIBSection(
-            memory_dc, ctypes.byref(header), 0, ctypes.byref(bits), None, 0
+    The wndproc must be kept alive by the caller for as long as the window
+    exists: Windows would otherwise call freed memory.
+    """
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    # Without an explicit restype the HWND is truncated to 32 bits on x64.
+    user32.CreateWindowExW.restype = wintypes.HWND
+    user32.CreateWindowExW.argtypes = [
+        wintypes.DWORD,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.HWND,
+        wintypes.HMENU,
+        wintypes.HINSTANCE,
+        wintypes.LPVOID,
+    ]
+    user32.DefWindowProcW.restype = ctypes.c_longlong
+    # Without argtypes ctypes guesses int for LPARAM and overflows on x64.
+    user32.DefWindowProcW.argtypes = [
+        wintypes.HWND,
+        wintypes.UINT,
+        wintypes.WPARAM,
+        wintypes.LPARAM,
+    ]
+
+    def wndproc(hwnd, message, wparam, lparam):  # noqa: ANN001
+        if message == _WM_DESTROY:
+            return 0
+        return user32.DefWindowProcW(hwnd, message, wparam, lparam)
+
+    wndproc_ref = _WNDPROC(wndproc)
+    instance = kernel32.GetModuleHandleW(None)
+    class_name = f"{class_prefix}{id(wndproc_ref)}"
+
+    wndclass = _WndClassEx()
+    wndclass.cbSize = ctypes.sizeof(_WndClassEx)
+    wndclass.style = 0
+    wndclass.lpfnWndProc = ctypes.cast(wndproc_ref, ctypes.c_void_p)
+    wndclass.hInstance = instance
+    wndclass.lpszClassName = class_name
+    if not user32.RegisterClassExW(ctypes.byref(wndclass)):
+        raise ctypes.WinError()
+
+    hwnd = user32.CreateWindowExW(
+        _WS_EX_LAYERED
+        | _WS_EX_TRANSPARENT
+        | _WS_EX_TOPMOST
+        | _WS_EX_TOOLWINDOW
+        | _WS_EX_NOACTIVATE,
+        class_name,
+        title,
+        _WS_POPUP,
+        0,
+        0,
+        10,
+        10,
+        None,
+        None,
+        instance,
+        None,
+    )
+    if not hwnd:
+        raise ctypes.WinError()
+    user32.ShowWindow(hwnd, _SW_SHOWNOACTIVATE)
+    return hwnd, wndproc_ref
+
+
+def _blit(hwnd, image: Image.Image, x: int, y: int, opacity: float = 1.0) -> None:  # noqa: ANN001
+    """Put a PIL RGBA image on a layered window at screen position (x, y)."""
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    width, height = image.size
+
+    # UpdateLayeredWindow wants premultiplied BGRA.
+    rgba = np.asarray(image, dtype=np.uint8)
+    alpha = rgba[:, :, 3].astype(np.uint16)
+    rgb = (rgba[:, :, :3].astype(np.uint16) * alpha[:, :, None] // 255).astype(np.uint8)
+    bgra = np.dstack([rgb[:, :, ::-1], rgba[:, :, 3]])
+    if opacity < 1.0:
+        bgra = (bgra.astype(np.uint16) * opacity).astype(np.uint8)
+    buffer = np.ascontiguousarray(bgra).tobytes()
+
+    header = _BitmapInfoHeader()
+    header.biSize = ctypes.sizeof(_BitmapInfoHeader)
+    header.biWidth = width
+    header.biHeight = -height  # negative means top-down, matching PIL row order
+    header.biPlanes = 1
+    header.biBitCount = 32
+    header.biCompression = 0
+
+    screen_dc = user32.GetDC(None)
+    memory_dc = gdi32.CreateCompatibleDC(screen_dc)
+    bits = ctypes.c_void_p()
+    bitmap = gdi32.CreateDIBSection(
+        memory_dc, ctypes.byref(header), 0, ctypes.byref(bits), None, 0
+    )
+    if not bitmap:
+        gdi32.DeleteDC(memory_dc)
+        user32.ReleaseDC(None, screen_dc)
+        return
+    try:
+        ctypes.memmove(bits, buffer, len(buffer))
+        old = gdi32.SelectObject(memory_dc, bitmap)
+
+        position = _Point(x, y)
+        size = _Size(width, height)
+        source = _Point(0, 0)
+        blend = _BlendFunction(_AC_SRC_OVER, 0, 255, _AC_SRC_ALPHA)
+
+        user32.UpdateLayeredWindow(
+            hwnd,
+            screen_dc,
+            ctypes.byref(position),
+            ctypes.byref(size),
+            memory_dc,
+            ctypes.byref(source),
+            0,
+            ctypes.byref(blend),
+            _ULW_ALPHA,
         )
-        if not bitmap:
-            gdi32.DeleteDC(memory_dc)
-            user32.ReleaseDC(None, screen_dc)
+        gdi32.SelectObject(memory_dc, old)
+    finally:
+        gdi32.DeleteObject(bitmap)
+        gdi32.DeleteDC(memory_dc)
+        user32.ReleaseDC(None, screen_dc)
+
+
+# ------------------------------------------------------------------ badges
+_SW_HIDE = 0
+BADGE_FILL = (255, 214, 10, 245)
+BADGE_TEXT = (18, 18, 20, 255)
+BADGE_EDGE = (30, 30, 34, 220)
+
+
+def render_badges(
+    badges: list[tuple[str, tuple[int, int, int, int]]], font=None  # noqa: ANN001
+) -> tuple[Image.Image, tuple[int, int]] | None:
+    """One image holding a tag per (label, screen rect), and where it goes.
+
+    Each tag sits on its element's top-left corner, the way browser hint
+    extensions do it, so the number reads as belonging to that element and
+    not to its neighbour. The image covers only the tags, not the screen.
+    """
+    if not badges:
+        return None
+    font = font or _load_font(13)
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    tags = []
+    for label, rect in badges:
+        box = probe.textbbox((0, 0), label, font=font)
+        width, height = box[2] - box[0] + 10, box[3] - box[1] + 6
+        # Nudge inside the element so the tag does not cover its neighbour.
+        tags.append((label, rect[0] - 2, rect[1] - 2, width, height, box))
+    left = min(t[1] for t in tags)
+    top = min(t[2] for t in tags)
+    right = max(t[1] + t[3] for t in tags)
+    bottom = max(t[2] + t[4] for t in tags)
+    image = Image.new("RGBA", (right - left + 1, bottom - top + 1), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    for label, x, y, width, height, box in tags:
+        x, y = x - left, y - top
+        draw.rounded_rectangle((x, y, x + width, y + height), radius=4,
+                               fill=BADGE_FILL, outline=BADGE_EDGE)
+        draw.text((x + 5 - box[0], y + 3 - box[1]), label, font=font, fill=BADGE_TEXT)
+    return image, (left, top)
+
+
+class Badges:
+    """Numbered tags drawn over a window's clickable elements.
+
+    Separate from the orb on purpose: [overlay].enabled turns the orb off,
+    and "show numbers" must still work. The window is click-through, so a tag
+    never intercepts the click it labels. `show` and `clear` are safe from any
+    thread; the window lives on its own, created on first use.
+    """
+
+    def __init__(self, seconds: float = 20.0) -> None:
+        self.enabled = sys.platform == "win32"
+        self.seconds = seconds
+        self._lock = threading.Lock()
+        self._badges: list[tuple[str, tuple[int, int, int, int]]] = []
+        self._until = 0.0
+        self._version = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._font = _load_font(13)
+
+    def show(self, badges: list[tuple[str, tuple[int, int, int, int]]],
+             seconds: float | None = None) -> None:
+        with self._lock:
+            self._badges = list(badges)
+            self._until = time.monotonic() + (self.seconds if seconds is None else seconds)
+            self._version += 1
+        self._ensure_thread()
+
+    def clear(self) -> None:
+        with self._lock:
+            if not self._badges:
+                return
+            self._badges = []
+            self._version += 1
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _ensure_thread(self) -> None:
+        if not self.enabled or self._thread is not None:
             return
+        self._thread = threading.Thread(target=self._run, name="badges", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
         try:
-            ctypes.memmove(bits, buffer, len(buffer))
-            old = gdi32.SelectObject(memory_dc, bitmap)
-
-            x, y = self._origin(width, height)
-            position = _Point(x, y)
-            size = _Size(width, height)
-            source = _Point(0, 0)
-            blend = _BlendFunction(_AC_SRC_OVER, 0, 255, _AC_SRC_ALPHA)
-
-            user32.UpdateLayeredWindow(
-                self._hwnd,
-                screen_dc,
-                ctypes.byref(position),
-                ctypes.byref(size),
-                memory_dc,
-                ctypes.byref(source),
-                0,
-                ctypes.byref(blend),
-                _ULW_ALPHA,
-            )
-            gdi32.SelectObject(memory_dc, old)
+            hwnd, wndproc_ref = _create_layered_window("VoiceVibeBadges", "Voice Vibe numbers")
+        except Exception as exc:
+            log.debug("badge overlay unavailable: %s", exc)
+            self.enabled = False
+            return
+        user32 = ctypes.windll.user32
+        user32.ShowWindow(hwnd, _SW_HIDE)
+        msg = wintypes.MSG()
+        drawn = 0
+        try:
+            while not self._stop.is_set():
+                while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
+                    user32.TranslateMessage(ctypes.byref(msg))
+                    user32.DispatchMessageW(ctypes.byref(msg))
+                with self._lock:
+                    if self._badges and time.monotonic() >= self._until:
+                        self._badges = []
+                        self._version += 1
+                    version, badges = self._version, list(self._badges)
+                if version != drawn:
+                    drawn = version
+                    rendered = render_badges(badges, self._font)
+                    if rendered is None:
+                        user32.ShowWindow(hwnd, _SW_HIDE)
+                    else:
+                        image, (x, y) = rendered
+                        _blit(hwnd, image, x, y)
+                        user32.ShowWindow(hwnd, _SW_SHOWNOACTIVATE)
+                        user32.SetWindowPos(hwnd, _HWND_TOPMOST, 0, 0, 0, 0,
+                                            _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOACTIVATE)
+                time.sleep(0.03)
         finally:
-            gdi32.DeleteObject(bitmap)
-            gdi32.DeleteDC(memory_dc)
-            user32.ReleaseDC(None, screen_dc)
+            user32.DestroyWindow(hwnd)
+            del wndproc_ref

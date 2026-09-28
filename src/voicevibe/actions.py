@@ -10,6 +10,9 @@ A spec is plain data, so a router, a config table, or a test can build one:
     {"window": "minimize"}            or maximize / restore, the front window
     {"focus": hwnd}                   or {"focus": {"hwnd", "title"}}
     {"lock": true}                    lock the workstation
+    {"element": {"target": el, "action": "click"}}
+                                      a uia.Element; also double_click,
+                                      right_click, hover
     {"sequence": [step, ...]}         a bare list means the same
 
 Any step, sequences included, may also carry:
@@ -55,6 +58,7 @@ MAX_SCROLL = 50
 MAX_CLICKS = 3
 MAX_WAIT = 10.0
 WINDOW_OPS = ("minimize", "maximize", "restore")
+POINTER_ACTIONS = ("click", "double_click", "right_click", "hover")
 
 DEFAULT_CONFIRM_WORDS = ("delete", "uninstall", "send", "buy")
 DEFAULT_CONFIRM_TIMEOUT = 8.0
@@ -157,7 +161,18 @@ class Lock:
         return "lock the computer"
 
 
-Step = Union[Keys, TypeText, Click, Scroll, Wait, Window, Focus, Lock, Confirm]
+@dataclass(frozen=True)
+class ElementAction:
+    """Act on something found on screen (a uia.Element or an OCR box)."""
+
+    element: Any
+    action: str = "click"
+
+    def describe(self) -> str:
+        return f"{self.action.replace('_', ' ')} {self.element.describe()}"
+
+
+Step = Union[Keys, TypeText, Click, Scroll, Wait, Window, Focus, Lock, ElementAction, Confirm]
 
 # Asked before a step: yes -> run it. Anything else, or an exception, cancels.
 Confirmer = Callable[[str, float], bool]
@@ -301,6 +316,21 @@ def _parse_lock(value: Any) -> Lock:
     return Lock()
 
 
+def _parse_element(value: Any) -> ElementAction:
+    if not isinstance(value, dict) or "target" not in value:
+        raise ActionError(f"element needs a target, got {value!r}")
+    unknown = set(value) - {"target", "action"}
+    if unknown:
+        raise ActionError(f"element does not take {sorted(unknown)}")
+    target = value["target"]
+    if not all(hasattr(target, attr) for attr in ("center", "invoke", "describe")):
+        raise ActionError(f"element target must be a found element, got {target!r}")
+    action = value.get("action", "click")
+    if action not in POINTER_ACTIONS:
+        raise ActionError(f"element action must be one of {POINTER_ACTIONS}, got {action!r}")
+    return ElementAction(target, action)
+
+
 _PARSERS = {
     "keys": _parse_keys,
     "type_text": _parse_type_text,
@@ -310,6 +340,7 @@ _PARSERS = {
     "window": _parse_window,
     "focus": _parse_focus,
     "lock": _parse_lock,
+    "element": _parse_element,
 }
 
 
@@ -514,6 +545,22 @@ class Executor:
                 log.warning("Windows refused to bring %s forward.", step.describe())
         elif isinstance(step, Lock):
             self.desktop.lock()
+        elif isinstance(step, ElementAction):
+            self._act(step)
+
+    def _act(self, step: ElementAction) -> None:
+        # A plain click goes through the element's own Invoke/Expand/Select
+        # pattern when it has one: no pointer jump, and it works even when
+        # something is drawn over the element. Everything else is the mouse.
+        if step.action == "click" and step.element.invoke():
+            return
+        from pynput.mouse import Button
+
+        self.mouse.position = step.element.center
+        if step.action == "hover":
+            return
+        button = Button.right if step.action == "right_click" else Button.left
+        self.mouse.click(button, 2 if step.action == "double_click" else 1)
 
     def _release_modifiers(self) -> None:
         # A hotkey modifier still held turns "t" into ctrl+alt+t.

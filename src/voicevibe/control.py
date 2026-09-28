@@ -12,6 +12,11 @@ paste it below" is not "copy" -- it is unrecognised, and typed as heard.
 
 Every action goes through the executor, so trigger-word confirmation applies
 to built-in commands exactly as to anything else.
+
+"click X" looks X up among the front window's UI Automation elements, then
+among OCR'd words when UIA has nothing. "show numbers" tags every clickable
+element with a number for "click 7"; the tags go at the next command or when
+they time out.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .actions import MAX_SCROLL, ActionError, Cancelled, Executor, parse
+from .uia import INTERACTIVE, LINKS, Finder, ambiguous, rank, rank_text, reading_order
 from .wake import _LEADING, _WORD, PhraseMatcher
 from .winctl import match_window
 
@@ -56,6 +62,27 @@ _ORDINALS = {
 }
 _POLITE = re.compile(r"^(?:please|can you|could you|would you)\s+|\s+(?:please|now)$", re.I)
 _STOP = re.compile(r"stop(?: scrolling)?|(?:that's )?enough", re.I)
+_VERB = r"click|double[- ]click|right[- ]click|hover(?: over)?|mouse over"
+_NUMBER_WORDS = "|".join(w for w in _NUMBERS if w not in ("to", "too", "for"))
+# "click 7", "right click number 7", or a bare "7" -- only while tags are up.
+_PICK = re.compile(
+    r"(?:(?P<verb>%s)(?: on)? )?(?:number )?(?P<n>\d+|%s)" % (_VERB, _NUMBER_WORDS), re.I
+)
+_NEXT = re.compile(r"(?:no )?(?:the )?next one|not that one|(?:the )?wrong one", re.I)
+_HIDE = re.compile(r"(?:hide|clear|remove) (?:the )?(?:numbers|links|hints)", re.I)
+
+
+def _verb(word: str | None) -> str:
+    word = (word or "click").lower().replace("-", " ")
+    if word.startswith("double"):
+        return "double_click"
+    if word.startswith("right"):
+        return "right_click"
+    if word.startswith(("hover", "mouse")):
+        return "hover"
+    return "click"
+
+
 def _number(word: str | None) -> int | None:
     if word is None:
         return None
@@ -142,6 +169,8 @@ class Router:
         cfg: dict | None = None,
         executor: Executor | None = None,
         commands: list[dict] | None = None,
+        finder: Finder | None = None,
+        badges: Any = None,
     ) -> None:
         cfg = cfg or {}
         self.enabled = bool(cfg.get("enabled", False))
@@ -160,6 +189,17 @@ class Router:
             log.warning("[control].enabled is true but no prefixes are set; disabling.")
             self.enabled = False
         self.user_commands = self._load_user_commands(commands or [])
+        self.finder = finder or Finder()
+        # Anything with show(badges, seconds) and clear(); overlay.Badges in
+        # the app. None still keeps numbers working, just without drawing them.
+        self.badges = badges
+        self.badge_seconds = float(cfg.get("badge_seconds", 20.0))
+        self._numbered: list = []
+        self._numbered_until = 0.0
+        self._numbered_verb = "click"
+        # The other matches from the last "click X", for "next one".
+        self._others: list = []
+        self._others_verb = "click"
         self._table = self._build_table()
 
     # ------------------------------------------------------------ recognising
@@ -262,6 +302,12 @@ class Router:
              r"(?:monitor|screen|display)",
              lambda m: _keys(f"win+shift+{(m['dir'] or 'right').lower()}")),
             (r"show (?:the )?desktop|minimi[sz]e (?:all|everything)", lambda m: _keys("win+d")),
+            # ----------------------------------------------- on-screen targets
+            (r"show (?:the )?(?:numbers|hints)|number (?:everything|them)", self._show_numbers),
+            (r"show (?:the )?links", self._show_links),
+            (_HIDE.pattern, self._hide_numbers),
+            (_NEXT.pattern, self._next_one),
+            (r"(?P<verb>%s)(?: on)? (?:the )?(?P<target>.+)" % _VERB, self._click),
             (r"(?:switch|change) to (?:the )?(?P<name>.+?)(?: window| app)?|"
              r"(?:focus(?: on)?|bring up) (?:the )?(?P<name2>.+?)(?: window| app)?", self._switch),
             # ---------------------------------------------------------- system
@@ -287,6 +333,16 @@ class Router:
         text = _clean(command)
         if not text:
             return NOT_HANDLED
+        self.finder.new_command()
+
+        if self._numbers_up():
+            pick = _PICK.fullmatch(text)
+            if pick:
+                return self._pick(pick, command)
+            if not _HIDE.fullmatch(text):
+                self._clear_numbers()  # the next command takes the tags away
+        if not _NEXT.fullmatch(text):
+            self._others = []
 
         row = self.user_commands.get(text.lower())
         if row is not None:
@@ -388,4 +444,90 @@ class Router:
         if presses is None or not 1 <= presses <= 50:
             return None
         return [_keys("volume_up" if up else "volume_down")] * presses
+
+    # ------------------------------------------------------ on-screen targets
+    def _front(self) -> int | None:
+        return self.executor.desktop.foreground()
+
+    def _act(self, element: Any, verb: str, command: str) -> Route:
+        spec = {
+            "element": {"target": element, "action": verb},
+            # The label is what trigger words are checked against, so "click
+            # Send" is asked about even when the words spoken were "click 4".
+            "label": f"{verb.replace('_', ' ')} {element.name}",
+        }
+        return self._run(spec, command, f"{verb.replace('_', ' ')} {element.describe()}")
+
+    def _click(self, m: re.Match) -> Any:
+        target, verb = m["target"], _verb(m["verb"])
+        hwnd = self._front()
+        if not hwnd:
+            return Route(handled=True, speak="There's no window to click in.")
+        matches = rank(target, self.finder.elements(hwnd))
+        if not matches:
+            # UIA has nothing by that name: read the pixels instead.
+            matches = rank_text(target, self.finder.text(hwnd).lines)
+        if not matches:
+            return Route(handled=True, caption=f"No {target}", speak=f"I can't find {target}.")
+        if ambiguous(target, matches):
+            tied = [e for e in matches if e.name.lower() == matches[0].name.lower()]
+            self._number(reading_order(tied), verb)
+            return Route(handled=True, caption=f"{len(tied)} called {target} - say a number",
+                         speak="Which one?")
+        self._others, self._others_verb = matches[1:], verb
+        return self._act(matches[0], verb, m.string)
+
+    def _next_one(self, m: re.Match) -> Route:
+        if not self._others:
+            return Route(handled=True, caption="No other match", speak="There's no other match.")
+        element = self._others.pop(0)
+        others, verb = self._others, self._others_verb
+        route = self._act(element, verb, m.string)
+        # _run does not touch these, but keep the intent explicit: another
+        # "next one" moves on again.
+        self._others, self._others_verb = others, verb
+        return route
+
+    def _show_numbers(self, m: re.Match, types: tuple = INTERACTIVE) -> Route:
+        hwnd = self._front()
+        found = self.finder.elements(hwnd, types) if hwnd else []
+        if not found:
+            what = "links" if types == LINKS else "anything clickable"
+            return Route(handled=True, speak=f"I don't see {what}.")
+        self._number(reading_order(found), "click")
+        kind = "links" if types == LINKS else "numbers"
+        return Route(handled=True, caption=f"{len(found)} {kind} - say click and a number")
+
+    def _show_links(self, m: re.Match) -> Route:
+        return self._show_numbers(m, LINKS)
+
+    def _hide_numbers(self, m: re.Match) -> Route:
+        self._clear_numbers()
+        return Route(handled=True)
+
+    def _number(self, elements: list, verb: str) -> None:
+        self._numbered = list(elements)
+        self._numbered_verb = verb
+        self._numbered_until = time.monotonic() + self.badge_seconds
+        if self.badges is not None:
+            self.badges.show([(str(i), e.rect) for i, e in enumerate(self._numbered, 1)],
+                             self.badge_seconds)
+
+    def _numbers_up(self) -> bool:
+        return bool(self._numbered) and time.monotonic() < self._numbered_until
+
+    def _clear_numbers(self) -> None:
+        self._numbered = []
+        if self.badges is not None:
+            self.badges.clear()
+
+    def _pick(self, m: re.Match, command: str) -> Route:
+        n = _number(m["n"])
+        if n is None or not 1 <= n <= len(self._numbered):
+            # Leave the tags up: the number was misheard, not the intent.
+            return Route(handled=True, speak=f"There's no number {m['n']}.")
+        element = self._numbered[n - 1]
+        verb = _verb(m["verb"]) if m["verb"] else self._numbered_verb
+        self._clear_numbers()
+        return self._act(element, verb, command)
 

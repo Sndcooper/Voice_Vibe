@@ -34,7 +34,20 @@ tts = [
 # Without this, screen answers fall back to the window title and the selection.
 screen = [
     "comtypes>=1.4.0",
+    # "click X", "show numbers": clickable elements by name.
+    "uiautomation>=2.0.20",
+    # OCR, for "click X" when UI Automation has no such element. winsdk is
+    # archived and never shipped Python 3.12 wheels, so from 3.12 the same
+    # Windows API comes from pywinrt's split packages; screen.py imports
+    # whichever is present.
     "winsdk>=1.0.0b10; python_version < '3.12'",
+    "winrt-runtime>=2.0; python_version >= '3.12'",
+    "winrt-Windows.Foundation>=2.0; python_version >= '3.12'",
+    "winrt-Windows.Foundation.Collections>=2.0; python_version >= '3.12'",
+    "winrt-Windows.Globalization>=2.0; python_version >= '3.12'",
+    "winrt-Windows.Graphics.Imaging>=2.0; python_version >= '3.12'",
+    "winrt-Windows.Media.Ocr>=2.0; python_version >= '3.12'",
+    "winrt-Windows.Storage.Streams>=2.0; python_version >= '3.12'",
 ]
 
 [project.scripts]

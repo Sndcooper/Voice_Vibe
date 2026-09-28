@@ -342,28 +342,90 @@ def capture_window(hwnd=None):  # noqa: ANN001, ANN201
         user32.ReleaseDC(hwnd, window_dc)
 
 
-def ocr_image(image) -> str:  # noqa: ANN001
+def client_origin(hwnd) -> tuple[int, int]:  # noqa: ANN001
+    """Screen position of `hwnd`'s client-area top-left (ClientToScreen)."""
+    point = wintypes.POINT(0, 0)
+    user32 = ctypes.windll.user32
+    user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+    user32.ClientToScreen(hwnd, ctypes.byref(point))
+    return point.x, point.y
+
+
+@dataclass(frozen=True)
+class OcrWord:
+    text: str
+    rect: tuple[int, int, int, int]  # left, top, right, bottom
+
+
+@dataclass(frozen=True)
+class OcrLine:
+    text: str
+    words: tuple[OcrWord, ...]
+
+    @property
+    def rect(self) -> tuple[int, int, int, int]:
+        return (min(w.rect[0] for w in self.words), min(w.rect[1] for w in self.words),
+                max(w.rect[2] for w in self.words), max(w.rect[3] for w in self.words))
+
+
+@dataclass(frozen=True)
+class OcrResult:
+    lines: tuple[OcrLine, ...] = ()
+
+    @property
+    def text(self) -> str:
+        return "\n".join(line.text for line in self.lines).strip()
+
+    def shifted(self, dx: int, dy: int) -> OcrResult:
+        """The same result with every box moved, e.g. from image to screen."""
+        def move(r: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+            return r[0] + dx, r[1] + dy, r[2] + dx, r[3] + dy
+
+        return OcrResult(tuple(
+            OcrLine(line.text, tuple(OcrWord(w.text, move(w.rect)) for w in line.words))
+            for line in self.lines
+        ))
+
+
+def _ocr_modules():  # noqa: ANN202
+    """The Windows OCR bindings: winsdk, or its successor winrt.
+
+    winsdk stopped at Python 3.11 -- the project is archived and has no 3.12
+    wheels. pywinrt's split `winrt-Windows.*` packages are the maintained
+    continuation with the same API, so either works.
+    """
+    try:
+        from winsdk.windows.graphics.imaging import BitmapDecoder
+        from winsdk.windows.media.ocr import OcrEngine
+        from winsdk.windows.storage.streams import DataWriter, InMemoryRandomAccessStream
+    except ImportError:
+        from winrt.windows.graphics.imaging import BitmapDecoder
+        from winrt.windows.media.ocr import OcrEngine
+        from winrt.windows.storage.streams import DataWriter, InMemoryRandomAccessStream
+    return BitmapDecoder, OcrEngine, DataWriter, InMemoryRandomAccessStream
+
+
+def ocr_image(image) -> OcrResult:  # noqa: ANN001
     """Run the OS text recogniser over an image. Needs the `screen` extra.
 
-    Uses the recogniser already built into Windows, so there is no model
-    download and no resident memory cost.
+    Returns every line with a box per word, in image pixels. Uses the
+    recogniser already built into Windows, so there is no model download and
+    no resident memory cost.
     """
     if image is None:
-        return ""
+        return OcrResult()
     try:
         import asyncio
         import io
 
-        from winsdk.windows.graphics.imaging import BitmapDecoder
-        from winsdk.windows.media.ocr import OcrEngine
-        from winsdk.windows.storage.streams import DataWriter, InMemoryRandomAccessStream
+        BitmapDecoder, OcrEngine, DataWriter, InMemoryRandomAccessStream = _ocr_modules()
     except Exception:
-        return ""
+        return OcrResult()
 
-    async def run() -> str:
+    async def run() -> OcrResult:
         engine = OcrEngine.try_create_from_user_profile_languages()
         if engine is None:
-            return ""
+            return OcrResult()
         payload = io.BytesIO()
         image.convert("RGB").save(payload, format="PNG")
         stream = InMemoryRandomAccessStream()
@@ -373,13 +435,36 @@ def ocr_image(image) -> str:  # noqa: ANN001
         decoder = await BitmapDecoder.create_async(stream)
         bitmap = await decoder.get_software_bitmap_async()
         result = await engine.recognize_async(bitmap)
-        return "\n".join(line.text for line in result.lines)
+        lines = []
+        for line in result.lines:
+            words = []
+            for word in line.words:
+                box = word.bounding_rect
+                words.append(OcrWord(word.text, (
+                    int(box.x), int(box.y), int(box.x + box.width), int(box.y + box.height)
+                )))
+            if words:
+                lines.append(OcrLine(line.text, tuple(words)))
+        return OcrResult(tuple(lines))
 
     try:
-        return asyncio.run(run()).strip()
+        return asyncio.run(run())
     except Exception as exc:
         log.debug("OCR failed: %s", exc)
-        return ""
+        return OcrResult()
+
+
+def ocr_window(hwnd=None) -> OcrResult:  # noqa: ANN001
+    """OCR of a window's client area, with every box in screen pixels."""
+    if sys.platform != "win32":
+        return OcrResult()
+    hwnd = hwnd or _user32().GetForegroundWindow()
+    if not hwnd:
+        return OcrResult()
+    result = ocr_image(capture_window(hwnd))
+    if not result.lines:
+        return result
+    return result.shifted(*client_origin(hwnd))
 
 
 class ScreenReader:
@@ -407,7 +492,7 @@ class ScreenReader:
         if not context.selection and self.use_uia:
             context.element = focused_element_text()[: self.max_chars]
         if not context.body and self.use_ocr:
-            context.ocr = ocr_image(capture_window())[: self.max_chars]
+            context.ocr = ocr_image(capture_window()).text[: self.max_chars]
         return context
 
     @staticmethod
@@ -422,4 +507,4 @@ class ScreenReader:
                 return False
 
         return {"title": sys.platform == "win32", "selection": has("pyperclip"),
-                "uia": has("comtypes"), "ocr": has("winsdk")}
+                "uia": has("comtypes"), "ocr": has("winsdk") or has("winrt")}

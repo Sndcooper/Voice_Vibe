@@ -22,10 +22,11 @@ from .hotkey import HotkeyListener
 from .inserter import Inserter, focused_window
 from .intent import Responder
 from .launcher import Launcher
-from .overlay import Overlay
+from .overlay import Badges, Overlay
 from .screen import ScreenReader
 from .speaker import Speaker, SpeechUnavailable, SystemVoice
 from .transcriber import Transcriber
+from .uia import Finder
 from .wake import PhraseMatcher
 
 log = logging.getLogger(__name__)
@@ -101,7 +102,9 @@ class VoiceVibe:
             confirm_words=control.get("confirm_words", DEFAULT_CONFIRM_WORDS),
             confirm_timeout=timeout,
         )
-        self.router = Router(control, executor=self.executor, commands=config.commands)
+        self.badges = Badges(float(control.get("badge_seconds", 20.0)))
+        self.router = Router(control, executor=self.executor, commands=config.commands,
+                             finder=Finder(), badges=self.badges)
         self.history = History(
             enabled=bool(config.history.get("enabled", True)),
             keep_days=int(config.history.get("keep_days", 30)),
@@ -583,6 +586,7 @@ class VoiceVibe:
     def _shutdown(self) -> None:
         self._stop.set()
         self.overlay.stop()
+        self.badges.stop()
         self.airoot.stop()
         self.hotkeys.stop()
         self.router.stop()
