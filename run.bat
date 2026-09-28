@@ -25,7 +25,7 @@ exit /b %errorlevel%
 :check_diagnostic
 REM Diagnostic modes print to stdout, so they need a console regardless.
 if "%ARGS%"=="" goto :background
-echo %ARGS% | findstr /I /C:"--check" /C:"--test" /C:"--mic-test" /C:"--wake-test" /C:"--list-devices" /C:"--key-test" /C:"--say" /C:"--help" /C:"--version" >nul
+echo %ARGS% | findstr /I /C:"--check" /C:"--test" /C:"--mic-test" /C:"--wake-test" /C:"--list-devices" /C:"--key-test" /C:"--say" /C:"--help" /C:"--version" /C:"--suggest-replacements" >nul
 if errorlevel 1 goto :background
 "%PY%" -m voicevibe %ARGS%
 exit /b %errorlevel%

@@ -54,6 +54,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="show the hotkey name of each key you press, to find usable bindings",
     )
+    parser.add_argument(
+        "--suggest-replacements",
+        action="store_true",
+        help="propose [[replacements]] from corrections in your history (writes nothing)",
+    )
+    parser.add_argument(
+        "--min-count", type=float, default=2,
+        help="how often a correction must recur for --suggest-replacements",
+    )
 
     parser.add_argument("-v", "--verbose", action="store_true", help="enable debug logging")
     parser.add_argument("--version", action="version", version=f"voicevibe {__version__}")
@@ -310,6 +319,12 @@ def main(argv: list[str] | None = None) -> int:
         return say(config, args.say)
     if args.key_test:
         return key_test(args.seconds or 20.0)
+    if args.suggest_replacements:
+        from .history import data_dir
+        from .suggest import report
+
+        print(report(data_dir() / "history", config.replacements, args.min_count))
+        return 0
 
     from .app import VoiceVibe
 

@@ -101,6 +101,7 @@ polish = true
 # it is typed). The whole utterance must be the edit.
 spoken_edits = false
 # Apply the [[replacements]] table to dictation (whole words, any case).
+# `python -m voicevibe --suggest-replacements` proposes rows from your history.
 apply_replacements = false
 # Only a whole utterance of "press enter" sends Enter. Sentence mentions stay text.
 voice_commands = true
