@@ -91,9 +91,17 @@ add_trailing_space = true
 strip_trailing_period = false
 lowercase = false
 # Basic polish only: capitalisation, spacing, and sentence punctuation.
-# No automatic lists, word replacements, spoken edits, or assistant actions.
+# No automatic lists, word replacements, spoken edits, or assistant actions --
+# except the two opt-ins below.
 raw_dictation = false
 polish = true
+# Spoken edits of the previous utterance: "scratch that", "cap that",
+# "all caps that", "lowercase that", "new paragraph", "delete the last two
+# words", "replace Tuesday with Wednesday" (only if Tuesday is in it; otherwise
+# it is typed). The whole utterance must be the edit.
+spoken_edits = false
+# Apply the [[replacements]] table to dictation (whole words, any case).
+apply_replacements = false
 # Only a whole utterance of "press enter" sends Enter. Sentence mentions stay text.
 voice_commands = true
 # Pause between pasting the text and pressing the command key, in seconds.

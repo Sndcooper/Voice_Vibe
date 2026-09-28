@@ -126,6 +126,20 @@ def _resolve_keys(spec: str) -> tuple[list[Key], Key | str | None]:
     return modifiers, main
 
 
+def apply_replacements(text: str, replacements: list[dict[str, str]]) -> str:
+    """Swap whole words/phrases, case-insensitively: "pie torch" -> "PyTorch".
+
+    Whole words only, so a rule for "cat" never touches "category".
+    """
+    for rule in replacements:
+        find = str(rule.get("find", "")).strip()
+        if find:
+            pattern = rf"(?<!\w){re.escape(find)}(?!\w)"
+            text = re.sub(pattern, lambda _m, r=str(rule.get("replace", "")): r, text,
+                          flags=re.IGNORECASE)
+    return text
+
+
 class Inserter:
     def __init__(
         self,
@@ -139,8 +153,12 @@ class Inserter:
         self.keyboard = Controller()
 
     def _normalize(self, text: str) -> str:
-        # Keep dictated words literal; legacy replacement tables are ignored.
-        return text.strip()
+        # Dictated words stay literal unless [[replacements]] are explicitly
+        # switched on ([output].apply_replacements, off by default).
+        text = text.strip()
+        if self.cfg.get("apply_replacements", False):
+            text = apply_replacements(text, self.replacements)
+        return text
 
     def _finish(self, text: str, trailing_space: bool) -> str:
         if not text:

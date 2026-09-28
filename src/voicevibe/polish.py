@@ -167,6 +167,38 @@ _EDITS = (
     (re.compile(r"^new\s+paragraph\b[.!?]*$", re.I), "paragraph"),
 )
 
+_COUNT_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+                "seven": 7, "eight": 8, "nine": 9, "ten": 10, "a": 1, "the": 1}
+# "delete the last word", "remove last three words"
+_DELETE_WORDS = re.compile(
+    r"^(?:delete|remove|scratch|erase)\s+(?:the\s+)?last\s+(?:(\w+)\s+)?words?[.!?]*$", re.I
+)
+# "replace Tuesday with Wednesday". Not "change X to Y": people dictate that
+# ("change the meeting to Friday"). Even this form can be dictation, so it is
+# only an edit when X is in the previous utterance -- see edit_applies.
+_REPLACE = re.compile(r"^replace\s+(.+?)\s+with\s+(.+?)[.!?]*$", re.I)
+
+
+def parse_edit(text: str) -> tuple[str, dict] | None:
+    """The spoken edit in `text` with its arguments, or None for dictation.
+
+    Whole utterance only, like detect_edit.
+    """
+    stripped = text.strip()
+    for pattern, name in _EDITS:
+        if pattern.match(stripped):
+            return name, {}
+    match = _DELETE_WORDS.match(stripped)
+    if match:
+        word = (match.group(1) or "1").lower()
+        count = int(word) if word.isdigit() else _COUNT_WORDS.get(word)
+        if count:
+            return "delete_words", {"count": min(count, 50)}
+    match = _REPLACE.match(stripped)
+    if match:
+        return "replace", {"find": match.group(1), "replace": match.group(2)}
+    return None
+
 
 def detect_edit(text: str) -> str | None:
     """Name the spoken edit in `text`, or None if it is ordinary dictation.
@@ -174,19 +206,50 @@ def detect_edit(text: str) -> str | None:
     Matched against the whole utterance only. "Scratch that" on its own is an
     instruction; the same words inside a sentence are not.
     """
-    stripped = text.strip()
-    for pattern, name in _EDITS:
-        if pattern.match(stripped):
-            return name
-    return None
+    edit = parse_edit(text)
+    return edit[0] if edit else None
 
 
-def apply_edit(name: str, previous: str) -> tuple[str, str]:
+def _delete_words(previous: str, count: int) -> str:
+    """`previous` without its last `count` words (punctuation goes with them)."""
+    trailing = previous[len(previous.rstrip()):]
+    words = previous.rstrip().split(" ")
+    kept = " ".join(words[:-count]) if count < len(words) else ""
+    return (kept + " ") if kept and trailing else kept
+
+
+def _replace_last(previous: str, find: str, replacement: str) -> str | None:
+    """Replace the last whole-word occurrence of `find`, or None if absent."""
+    matches = list(re.finditer(rf"(?<!\w){re.escape(find)}(?!\w)", previous, re.IGNORECASE))
+    if not matches:
+        return None
+    hit = matches[-1]
+    return previous[:hit.start()] + replacement + previous[hit.end():]
+
+
+def edit_applies(name: str, previous: str, **args: object) -> bool:
+    """Whether an edit can act on `previous`. A "replace" whose word is not
+    there is ordinary speech that happens to start with "replace"."""
+    if name == "replace":
+        return _replace_last(previous, str(args.get("find", "")), "") is not None
+    return bool(previous)
+
+
+def apply_edit(name: str, previous: str, **args: object) -> tuple[str, str]:
     """Apply an edit to the previously inserted text.
 
     Returns (replacement, spoken confirmation). The caller is responsible for
     removing `previous` from the target before inserting the replacement.
     """
+    if name == "delete_words":
+        count = int(args.get("count", 1) or 1)
+        return _delete_words(previous, count), "Deleted."
+    if name == "replace":
+        find, replacement = str(args.get("find", "")), str(args.get("replace", ""))
+        result = _replace_last(previous, find, replacement) if find else None
+        if result is None:
+            return previous, f"I couldn't find {find}."
+        return result, "Replaced."
     if name == "undo":
         return "", "Scratched."
     if name == "paragraph":

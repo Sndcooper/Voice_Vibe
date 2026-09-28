@@ -23,6 +23,7 @@ from .inserter import Inserter, focused_window
 from .intent import Responder
 from .launcher import Launcher
 from .overlay import Badges, Overlay
+from .polish import apply_edit, edit_applies, parse_edit
 from .screen import ScreenReader
 from .speaker import Speaker, SpeechUnavailable, SystemVoice
 from .transcriber import Transcriber, choose_command_model
@@ -588,6 +589,13 @@ class VoiceVibe:
         self._do_insert(text, elapsed)
 
     def _do_insert(self, text: str, elapsed: float) -> None:
+        # Opt-in: "scratch that", "delete the last two words", "replace X
+        # with Y" rewrite the previous utterance instead of being typed.
+        if self.config.output.get("spoken_edits", False) and self._last_inserted:
+            edit = parse_edit(text)
+            if edit is not None and edit_applies(edit[0], self._last_inserted, **edit[1]):
+                self._do_edit(edit[0], edit[1], text, elapsed)
+                return
         target = focused_window() or "unknown window"
         inserted, fired = self.inserter.insert(text)
         self._last_fired = fired
@@ -608,6 +616,36 @@ class VoiceVibe:
         )
         self.overlay.show(inserted.strip() or " ".join(c["keys"] for c in fired))
         self._ends_dictation = any(c.get("ends_dictation", True) for c in fired)
+        self.beeper.done()
+
+    def _do_edit(self, edit: str, args: dict, heard: str, elapsed: float) -> None:
+        """Rewrite the previous utterance in place, rather than appending.
+
+        Only the part that changes is touched: backspace to where the new
+        text first differs, then type the new ending. "Replace Tuesday with
+        Wednesday" near the end of a sentence costs a few keystrokes, not a
+        retype of the whole thing. Assumes the cursor is still where the
+        previous utterance ended, as "scratch that" always has.
+        """
+        previous = self._last_inserted
+        replacement, spoken = apply_edit(edit, previous, **args)
+        same = 0
+        for a, b in zip(previous, replacement):
+            if a != b:
+                break
+            same += 1
+        self.inserter.erase(len(previous) - same)
+        self.inserter.insert_literal(replacement[same:])
+        self._last_inserted = replacement
+        self._ends_dictation = False
+
+        log.info("[%.2fs] edit %s | %r -> %r", elapsed, edit, previous, replacement)
+        self.history.add(action="edit", heard=heard.strip(), edit=edit, **{
+            k: v for k, v in args.items() if k in ("find", "replace", "count")
+        }, previous=previous, inserted=replacement, seconds=round(elapsed, 2))
+        self.overlay.show(spoken or edit)
+        if spoken:
+            self.voice.say(spoken)
         self.beeper.done()
 
     def _do_speak(self, text: str, elapsed: float) -> None:

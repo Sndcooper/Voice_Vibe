@@ -77,6 +77,8 @@ DEFAULTS: dict[str, Any] = {
         "polish": True,
         "voice_commands": True,
         "command_delay": 0.12,
+        "spoken_edits": False,
+        "apply_replacements": False,
     },
     "speech": {
         "device": "auto",
