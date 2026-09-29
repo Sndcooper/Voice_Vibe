@@ -1,4 +1,4 @@
-﻿"""Watchers: poll sources for things worth reporting -> store watch_items.
+"""Watchers: poll sources for things worth reporting -> store watch_items.
 
 GitHub (via `gh api`, argument lists only): new repos I own, PRs that involve
 me, and new comments/mentions/reviews on issues and PRs (notifications). CI

@@ -1,4 +1,4 @@
-﻿"""GitHub skill: gh CLI + git, driven by voice through the hub.
+"""GitHub skill: gh CLI + git, driven by voice through the hub.
 
 Builds on the `gh` CLI (logged in as the user) and plain git; this module is
 glue only. Every command is an argument list handed to the runner -- never a

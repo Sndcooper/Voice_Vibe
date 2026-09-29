@@ -1,4 +1,4 @@
-﻿"""GitHub skill (vvhub.skills.github).
+"""GitHub skill (vvhub.skills.github).
 
 What matters: every command is an argument list (never a shell string), the
 critical actions (create repo, push, PR) never run without an approved
