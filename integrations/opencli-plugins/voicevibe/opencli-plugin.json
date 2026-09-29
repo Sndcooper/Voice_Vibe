@@ -1,0 +1,6 @@
+{
+  "name": "voicevibe",
+  "version": "0.1.0",
+  "opencli": ">=1.8.0",
+  "description": "Voice Vibe commands: linkedin-post (write, dry-run unless --send), instagram-notifications, github-notifications. Install: opencli plugin install <abs path to this folder>"
+}

@@ -116,20 +116,29 @@ class FakeApprovals:
 
 
 class FakeStore:
+    """Same signatures as WS0's vvhub.store.Store for the calls WS3 makes."""
+
     def __init__(self) -> None:
         self.jobs: dict[str, dict] = {}
         self.watch: list[dict] = []
 
-    def add_job(self, **job):  # noqa: ANN003, ANN201
+    def add_job(self, kind, conversation=None, status="queued"):  # noqa: ANN001, ANN201
         job_id = f"job{len(self.jobs) + 1}"
-        self.jobs[job_id] = dict(job)
+        self.jobs[job_id] = {"kind": kind, "status": status}
         return job_id
 
-    def update_job(self, job_id, **fields):  # noqa: ANN001, ANN003, ANN201
-        self.jobs.setdefault(job_id, {}).update(fields)
+    def update_job(self, job_id, status=None, progress=None, result=None):  # noqa: ANN001, ANN201
+        job = self.jobs.setdefault(job_id, {})
+        for key, value in (("status", status), ("progress", progress), ("result", result)):
+            if value is not None:
+                job[key] = value
 
-    def add_watch_item(self, **item):  # noqa: ANN003, ANN201
-        self.watch.append(item)
+    def add_watch_item(self, source, kind, key, title="", url="", data=None, ts=None):  # noqa: ANN001, ANN201
+        if any(w["source"] == source and w["key"] == key for w in self.watch):
+            return False
+        self.watch.append({"source": source, "kind": kind, "key": key, "title": title, "url": url,
+                           "data": data or {}, "ts": ts})
+        return True
 
 
 class FakeNotion:

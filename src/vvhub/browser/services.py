@@ -19,8 +19,8 @@ MODULES = {
     "llm": "vvhub.llm",
     "laya": "vvhub.laya_engine",
     "approvals": "vvhub.approvals",
-    "store": "vvhub.store",
     "secrets": "vvhub.secrets",
+    # "store" and "bus" are instances on the hub (server.Hub), not modules.
 }
 
 
