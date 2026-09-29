@@ -27,7 +27,9 @@ LOGO_WIDTH = 132
 LOGO_HEIGHT = 92
 LOGO_TOP = 16
 # How much the logo grows at full voice level.
-GROWTH = 0.24
+GROWTH = 0.36
+# Animation frames per second at full voice level (scaled by sqrt of level).
+DANCE_SPEED = 36
 BASE = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent))
 SPRITESHEET = BASE / "airoot-spritesheet.png"
 ICON = BASE / "airoot-icon.ico"
@@ -384,7 +386,7 @@ class AirootOverlay(ListeningOverlay):
         tau = .045 if self.audio_peak > self.level else .12
         self.level += (self.audio_peak - self.level) * (1 - math.exp(-dt / tau))
         if self.mode == "listening" and self.level > .015:
-            self.dance_phase += dt * 24 * math.sqrt(self.level)
+            self.dance_phase += dt * DANCE_SPEED * math.sqrt(self.level)
             self.frame_index = int(self.dance_phase) % len(self.frames)
         if self.mode == "gather" and now - self.entered >= self.MORPH_SECONDS:
             self.mode = "transcribing"
