@@ -64,6 +64,12 @@ hub = [
     "websockets==17.1",
     "keyring==25.7.0",
 ]
+# WS4: 08:00/20:00 reports (vvhub.scheduler, skills/reports). Without it the
+# scheduler falls back to a plain asyncio loop; HTML reports need jinja2.
+reports = [
+    "apscheduler==3.11.0",
+    "jinja2==3.1.6",
+]
 
 [project.scripts]
 voicevibe = "voicevibe.__main__:main"
