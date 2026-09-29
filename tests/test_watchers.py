@@ -24,14 +24,20 @@ SINCE = datetime(2026, 9, 29, 20, 0, tzinfo=timezone.utc)
 
 
 class FakeStore:
+    """Mirrors vvhub.store.Store's watch-item API (UNIQUE(source, key))."""
+
     def __init__(self):
         self.items: list[dict] = []
 
-    def add_watch_item(self, **item):
-        self.items.append(item)
-        return len(self.items)
+    def add_watch_item(self, source, kind, key, title="", url="", data=None, ts=None):
+        if any(i["source"] == source and i["key"] == key for i in self.items):
+            return False
+        self.items.append(dict(source=source, kind=kind, key=key, title=title, url=url,
+                               data=data or {}, ts=ts))
+        return True
 
-    def list_watch_items(self, since=None, kinds=None):
+    def list_watch_items(self, since=0.0, kinds=None):
+        assert isinstance(since, float), since
         return [i for i in self.items if kinds is None or i["kind"] in kinds]
 
 
@@ -154,6 +160,23 @@ class GitHubWatcherTests(unittest.TestCase):
 
         watcher = watchers.GitHubWatcher(runner=missing)
         self.assertEqual(run(watcher.poll(SINCE, self.store)), [])
+
+    def test_real_store_dedupes(self):
+        try:
+            from vvhub.store import Store
+        except ImportError:
+            self.skipTest("vvhub.store not present")
+        store = Store(":memory:")
+        try:
+            self.assertEqual(len(run(self.watcher.poll(SINCE, store))), 4)
+            # A fresh watcher (no in-memory state) still doesn't duplicate.
+            fresh = watchers.GitHubWatcher(runner=FakeRunner())
+            self.assertEqual(run(fresh.poll(SINCE, store)), [])
+            rows = store.list_watch_items(0.0, ["github_pr"])
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["url"], "https://github.com/me/new-one/pull/7")
+        finally:
+            store.close()
 
 
 class PollAllTests(unittest.TestCase):

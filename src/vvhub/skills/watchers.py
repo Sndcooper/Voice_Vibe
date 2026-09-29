@@ -6,8 +6,8 @@ runs, commit notifications and other noise are skipped (TASK.md rule 16: "not
 ordinary commits"). Other streams can add watchers with the same shape: an
 object with `name`, `errors` and `async poll(since, store) -> list[dict]`.
 
-Items are written with `store.add_watch_item(kind=, source=, key=, title=,
-url=, created=, data=)`; `key` is stable per event so re-polls and the
+Items are written with `store.add_watch_item(source=, kind=, key=, title=,
+url=, data=, ts=)` (WS0's Store, UNIQUE(source, key)); `key` is stable per event so re-polls and the
 overlap window never duplicate.
 """
 
@@ -53,7 +53,7 @@ def html_url(api_url: str | None) -> str:
 
 def _existing_keys(store: Any, since: datetime, kinds: list[str]) -> set[str]:
     try:
-        items = store.list_watch_items(since - FIRST_LOOKBACK, kinds) or []
+        items = store.list_watch_items((since - FIRST_LOOKBACK).timestamp(), kinds) or []
     except Exception:  # noqa: BLE001
         return set()
     keys = set()
@@ -101,7 +101,13 @@ class GitHubWatcher:
             if item["key"] in seen:
                 continue
             seen.add(item["key"])
-            store.add_watch_item(**item)
+            created = parse_time(item.get("created"))
+            added = store.add_watch_item(
+                source=item["source"], kind=item["kind"], key=item["key"], title=item["title"],
+                url=item["url"], data=dict(item["data"], created=item.get("created")),
+                ts=created.timestamp() if created else None)
+            if added is False:  # the store already had it (UNIQUE(source, key))
+                continue
             new.append(item)
         return new
 
