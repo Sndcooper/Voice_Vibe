@@ -132,6 +132,19 @@ class TestRouting(unittest.TestCase):
         self.assertEqual(vv._transcribe_job(self.seconds(1), app.SESSION, armed=True),
                          "the main transcript")
 
+    def test_a_prompt_echo_is_dropped_not_typed(self) -> None:
+        hint = "Open a pull request after the git commit; check the API."
+        vv = self.make(main_text="Open a pull request after the git commit commit commit",
+                       fast=False)
+        vv.vocab = SimpleNamespace(hint=lambda process: hint)
+        with self.assertLogs("voicevibe.app", level="INFO"):
+            self.assertEqual(vv._transcribe_job(self.seconds(4), app.INSERT, armed=False), "")
+
+    def test_the_wake_phrase_is_not_an_echo_while_armed(self) -> None:
+        vv = self.make(fast_text="hey computer ok computer")
+        self.assertEqual(vv._transcribe_job(self.seconds(1), app.SESSION, armed=True),
+                         "hey computer ok computer")
+
     def test_both_models_get_the_prompt(self) -> None:
         vv = self.make()
         vv._transcribe_job(self.seconds(1), app.SESSION, armed=True)

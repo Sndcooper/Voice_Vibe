@@ -28,7 +28,7 @@ from .screen import ScreenReader
 from .speaker import Speaker, SpeechUnavailable, SystemVoice
 from .transcriber import Transcriber, choose_command_model
 from .uia import Finder
-from .vocab import Vocabulary
+from .vocab import Vocabulary, echoes_prompt
 from .winctl import front_process
 from .wake import PhraseMatcher
 from .wakeword import WakeWordDetector, phrase_for
@@ -538,10 +538,22 @@ class VoiceVibe:
         pass -- short session utterances when commands are on. If that first
         pass does not hear the prefix, the dictation model transcribes it
         again, so dictation is never left with the small model's text.
+
+        On near-silent audio Whisper tends to read its own prompt back; such
+        a transcript is dropped rather than typed (not while armed, where the
+        prompt *is* the wake phrase and hearing it is the point).
         """
         if self.transcriber is None:
             return ""
         prompt = self._decoder_prompt(armed, "" if armed else front_process())
+        text = self._decode_job(audio, action, armed, prompt)
+        if text and not armed and echoes_prompt(text, prompt):
+            log.info("Dropped a transcript that only repeats the prompt: %r", text[:80])
+            return ""
+        return text
+
+    def _decode_job(self, audio: np.ndarray, action: str, armed: bool,
+                    prompt: str | None) -> str:
         fast = self.command_transcriber
         for model in (self.transcriber, fast):
             if model is not None:

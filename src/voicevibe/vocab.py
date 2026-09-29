@@ -24,7 +24,33 @@ wake phrases (see app._decoder_prompt).
 
 from __future__ import annotations
 
+import re
+from difflib import SequenceMatcher
 from typing import Any
+
+_WORDS = re.compile(r"[a-z0-9']+")
+
+
+def echoes_prompt(text: str, prompt: str | None, min_words: int = 4) -> bool:
+    """Whether `text` is just the decoder prompt read back.
+
+    Given silence, Whisper continues its prompt instead of transcribing:
+    with the VS Code hint it typed "Open a pull request after the git commit
+    commit commit ...". Counted after collapsing repeated words, the
+    transcript has to be almost entirely one run copied from the prompt, so
+    a real sentence that merely shares a phrase with it is kept.
+    """
+    if not text or not prompt:
+        return False
+    words = _WORDS.findall(text.lower())
+    collapsed = [w for i, w in enumerate(words) if i == 0 or w != words[i - 1]]
+    if len(collapsed) < min_words:
+        return False
+    hint = _WORDS.findall(prompt.lower())
+    run = SequenceMatcher(None, collapsed, hint, autojunk=False).find_longest_match(
+        0, len(collapsed), 0, len(hint)
+    ).size
+    return run >= min_words and run >= 0.9 * len(collapsed)
 
 _EDITOR = (
     "Refactor the async function, return the JSON, then run pytest and npm "

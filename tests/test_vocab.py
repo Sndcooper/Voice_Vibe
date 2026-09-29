@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from voicevibe.config import DEFAULTS  # noqa: E402
 from voicevibe.transcriber import Transcriber  # noqa: E402
-from voicevibe.vocab import BUILTIN_PROMPTS, Vocabulary  # noqa: E402
+from voicevibe.vocab import BUILTIN_PROMPTS, Vocabulary, echoes_prompt  # noqa: E402
 
 try:
     from voicevibe import app
@@ -55,6 +55,33 @@ class TestVocabulary(unittest.TestCase):
         vocab = Vocabulary({"app_prompts": False, "prompts": {"code.exe": "mine"}})
         self.assertEqual(vocab.hint("code.exe"), "mine")
         self.assertEqual(vocab.hint("cursor.exe"), "")
+
+
+class TestPromptEcho(unittest.TestCase):
+    HINT = BUILTIN_PROMPTS["code.exe"]
+
+    def test_the_logged_phantom_is_an_echo(self) -> None:
+        # Real log line, 2026-09-28, silent input with the VS Code hint.
+        text = ("Open a pull request after the git commit commit commit commit commit "
+                "commit commit commit")
+        self.assertTrue(echoes_prompt(text, self.HINT))
+
+    def test_the_whole_hint_read_back(self) -> None:
+        self.assertTrue(echoes_prompt(self.HINT, self.HINT))
+
+    def test_real_dictation_sharing_a_phrase_is_kept(self) -> None:
+        for text in (
+            "open a pull request after the git commit and tag the release for Friday",
+            "please run pytest before you merge",
+            "Thank you.",
+            "commit",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(echoes_prompt(text, self.HINT))
+
+    def test_no_prompt_no_echo(self) -> None:
+        self.assertFalse(echoes_prompt("open a pull request after the git commit", None))
+        self.assertFalse(echoes_prompt("", self.HINT))
 
 
 class TestTranscriberHotwords(unittest.TestCase):
