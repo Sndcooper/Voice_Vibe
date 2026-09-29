@@ -397,6 +397,15 @@ def default_input_device(priority: list[str] | None = None) -> int | None:
         if candidates:
             chosen, dev = min(candidates, key=lambda entry: (entry[0] != default, entry[0]))
             log.info("Preferred input [%d] %s.", chosen, dev["name"])
+            if is_loopback(dev["name"]):
+                # Honoured, since it was asked for by name -- but it is the
+                # usual cause of "it hears nothing and types Thank you."
+                log.warning(
+                    "Input [%d] %s is a loopback: it records what the speakers "
+                    "play, not the microphone. Dictation will be silent unless "
+                    "something routes your voice into it. Check "
+                    "[audio].input_priority.", chosen, dev["name"],
+                )
             return chosen
 
     names = dict(devices)

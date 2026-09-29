@@ -96,11 +96,30 @@ class DeviceSelectionTest(unittest.TestCase):
         self.assertEqual(chosen, 2)
 
     def test_explicit_stereo_mix_fallback_beats_other_microphones(self) -> None:
-        chosen = self.resolve(
-            [("Microphone Array", 2), ("Stereo Mix (Realtek(R) Audio)", 2)],
-            default=0, priority=["Microphone (Realtek(R) Audio)", "Stereo Mix"],
-        )
+        with self.assertLogs("voicevibe.audio", level="WARNING"):
+            chosen = self.resolve(
+                [("Microphone Array", 2), ("Stereo Mix (Realtek(R) Audio)", 2)],
+                default=0, priority=["Microphone (Realtek(R) Audio)", "Stereo Mix"],
+            )
         self.assertEqual(chosen, 1)
+
+    def test_a_preferred_loopback_is_warned_about(self) -> None:
+        # Honoured because it was named -- but it records the speakers, which
+        # is exactly how dictation ended up typing "Thank you." for silence.
+        with self.assertLogs("voicevibe.audio", level="WARNING") as logs:
+            self.resolve([("Stereo Mix (Realtek(R) Audio)", 2)], default=0,
+                         priority=["Stereo Mix"])
+        self.assertIn("loopback", logs.output[0])
+
+    def test_built_in_array_is_the_fallback_when_no_jack_mic(self) -> None:
+        # The shipped config: MME truncates names to 31 characters, so the
+        # array is matched as a substring.
+        chosen = self.resolve(
+            [("Microsoft Sound Mapper - Input", 2), ("Stereo Mix (Realtek(R) Audio)", 2),
+             ("Microphone Array (Realtek(R) Au", 2)], default=1,
+            priority=["Microphone (Realtek(R) Audio)", "Microphone Array"],
+        )
+        self.assertEqual(chosen, 2)
 
 
 class LoopbackNamingTest(unittest.TestCase):
