@@ -606,7 +606,7 @@ The floating status orb.
 | Key | Default | Description |
 | --- | --- | --- |
 | `enabled` | `true` | Write the JSONL turn history |
-| `keep_days` | `30` | Delete history older than this; `0` keeps everything |
+| `keep_days` | `2` | Delete history older than this; `0` keeps everything. `computer save this conversation` copies it to `history\saved\`, kept forever |
 
 ### `[assistant]`
 

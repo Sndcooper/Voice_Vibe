@@ -228,7 +228,9 @@ max_width = 460
 [history]
 enabled = true
 # Delete history files older than this. 0 keeps everything.
-keep_days = 30
+# "computer save this conversation" copies the kept days into history\saved\,
+# which is never pruned.
+keep_days = 2
 
 # Replies. There is no language model here: answers are matched and extracted,
 # never generated, so this costs no extra memory and cannot invent an answer.

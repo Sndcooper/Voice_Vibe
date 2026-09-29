@@ -18,7 +18,7 @@ from .confirm import DEFAULT_NO, DEFAULT_YES, VoiceConfirmer
 from .context import ContextBuilder, LocalScreen, purge_crops
 from .control import Router
 from .feedback import Beeper, Tray
-from .history import History, data_dir
+from .history import History, data_dir, is_save_command
 from .hotkey import HotkeyListener, physically_down
 from .inserter import Inserter, focused_window
 from .intent import Responder
@@ -139,7 +139,7 @@ class VoiceVibe:
         self.executor.say = self.voice.say
         self.history = History(
             enabled=bool(config.history.get("enabled", True)),
-            keep_days=int(config.history.get("keep_days", 30)),
+            keep_days=int(config.history.get("keep_days", 2)),
         )
         self.transcriber: Transcriber | None = None
         self.vocab = Vocabulary(config.vocab)
@@ -709,6 +709,10 @@ class VoiceVibe:
         """
         command = self.router.split(text)
         if command is not None:
+            # Before the router: its "save" rule would press Ctrl+S.
+            if is_save_command(command):
+                self._save_conversation(text, elapsed)
+                return
             # Exact screen phrases first: the router's "focus on <window>"
             # rule would otherwise read "focus on my cursor" as a window name.
             local = self.local_screen.handle(command) if self.local_screen else None
@@ -739,6 +743,23 @@ class VoiceVibe:
             if self._do_session_extra(command, text, elapsed):
                 return
         self._do_insert(text, elapsed, session=True)
+
+    def _save_conversation(self, heard: str, elapsed: float) -> None:
+        """Keep the last two days of turns forever (history/saved/)."""
+        self.router.stop()
+        self._last_inserted = ""
+        self.history.add(action="save_conversation", heard=heard.strip(),
+                         seconds=round(elapsed, 2))
+        count = self.history.save()
+        hub = getattr(self, "hub", None)
+        if hub is not None:
+            # The hub keeps its own copy (decisions, approvals); best effort.
+            hub.request_async("save this conversation")
+        speak = "Conversation saved." if count else "There is nothing to save yet."
+        log.info("[%.2fs] -> save conversation | %d turns", elapsed, count)
+        self.overlay.show(speak)
+        self.voice.say(speak)
+        self.beeper.done()
 
     def _do_session_extra(self, command: str, heard: str, elapsed: float) -> bool:
         """Restore assistant actions and edits only behind the session prefix."""

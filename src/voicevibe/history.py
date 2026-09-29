@@ -52,14 +52,18 @@ def attach_file_log(verbose: bool = False, max_bytes: int = 1_000_000) -> Path |
 class History:
     """Append-only record of turns, one JSONL file per day.
 
+    Kept `keep_days` (default 2) and then deleted, unless saved: `save()`
+    copies the kept days into `history/saved/`, which pruning never touches.
+
     Writes are best effort: a full disk or a locked file must never take down
     dictation, so every failure is logged once and swallowed.
     """
 
-    def __init__(self, enabled: bool = True, keep_days: int = 30) -> None:
+    def __init__(self, enabled: bool = True, keep_days: int = 2,
+                 directory: Path | None = None) -> None:
         self.enabled = enabled
         self.keep_days = keep_days
-        self.directory = data_dir() / "history"
+        self.directory = directory or data_dir() / "history"
         self._lock = threading.Lock()
         self._warned = False
         self._recent: list[dict] = []
@@ -74,19 +78,54 @@ class History:
             return
         self._prune()
 
+    @property
+    def saved_directory(self) -> Path:
+        return self.directory / "saved"
+
     def _path(self) -> Path:
         return self.directory / f"{datetime.now():%Y-%m-%d}.jsonl"
 
-    def _prune(self) -> None:
+    def _prune(self, now: float | None = None) -> None:
         if self.keep_days <= 0:
             return
-        cutoff = datetime.now().timestamp() - self.keep_days * 86400
+        cutoff = (now or datetime.now().timestamp()) - self.keep_days * 86400
         try:
+            # Top level only: saved/ is kept forever.
             for entry in self.directory.glob("*.jsonl"):
                 if entry.stat().st_mtime < cutoff:
                     entry.unlink()
         except OSError:
             pass
+
+    def save(self) -> int:
+        """Keep the current conversation forever. Returns the turns saved.
+
+        The "conversation" is everything still kept (the last `keep_days`).
+        Saving twice does not duplicate turns: each day's saved file is
+        rewritten from the union of what was saved and what is kept now.
+        """
+        if not self.enabled:
+            return 0
+        saved = 0
+        with self._lock:
+            try:
+                self.saved_directory.mkdir(parents=True, exist_ok=True)
+                for day in sorted(self.directory.glob("*.jsonl")):
+                    target = self.saved_directory / day.name
+                    lines: list[str] = []
+                    seen: set[str] = set()
+                    for source in (target, day):
+                        if not source.exists():
+                            continue
+                        for line in source.read_text(encoding="utf-8").splitlines():
+                            if line.strip() and line not in seen:
+                                seen.add(line)
+                                lines.append(line)
+                    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                    saved += len(lines)
+            except OSError as exc:
+                log.warning("Could not save the conversation: %s", exc)
+        return saved
 
     def add(self, **fields: object) -> dict:
         """Record one turn. Returns the record so callers can show it."""
@@ -108,3 +147,16 @@ class History:
     def recent(self, limit: int = 10) -> list[dict]:
         with self._lock:
             return self._recent[-limit:]
+
+
+# "computer save this conversation" and close variants. Exact match after the
+# prefix, so a dictated sentence that mentions saving is never swallowed.
+SAVE_PHRASES = frozenset({
+    "save this conversation", "save the conversation", "save conversation",
+    "save this chat", "save the chat", "keep this conversation",
+})
+
+
+def is_save_command(command: str) -> bool:
+    words = "".join(c if c.isalnum() or c.isspace() else " " for c in command.lower())
+    return " ".join(words.split()) in SAVE_PHRASES

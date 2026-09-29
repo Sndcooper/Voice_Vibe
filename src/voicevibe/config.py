@@ -110,7 +110,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "history": {
         "enabled": True,
-        "keep_days": 30,
+        "keep_days": 2,
     },
     "assistant": {
         "enabled": False,
