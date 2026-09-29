@@ -4,13 +4,23 @@ REM Pass --console as the first argument to keep a visible window for debugging.
 setlocal
 cd /d "%~dp0"
 
-set "PY=.venv\Scripts\python.exe"
-set "PYW=.venv\Scripts\pythonw.exe"
+REM Environments and model caches live next to the repo, in ..\venvs
+REM (see ..\TASK.md). The old in-repo .venv is still used if present alone.
+set "VENVS=%~dp0..\venvs"
+set "PY=%VENVS%\voicevibe\Scripts\python.exe"
+set "PYW=%VENVS%\voicevibe\Scripts\pythonw.exe"
+if not exist "%PY%" (
+    set "PY=.venv\Scripts\python.exe"
+    set "PYW=.venv\Scripts\pythonw.exe"
+) else (
+    if not defined HF_HOME set "HF_HOME=%VENVS%\hf-cache"
+    if not defined UV_CACHE_DIR set "UV_CACHE_DIR=%VENVS%\uv-cache"
+)
 
 if not exist "%PY%" (
     echo No virtual environment found. Run setup first:
-    echo   uv venv --python 3.11
-    echo   uv pip install -e .
+    echo   uv venv --python 3.11 ..\venvs\voicevibe
+    echo   uv pip install --python ..\venvs\voicevibe\Scripts\python.exe -e ".[cuda,screen,wakeword]"
     exit /b 1
 )
 
