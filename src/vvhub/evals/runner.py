@@ -55,6 +55,9 @@ async def _evaluate(rows: list[dict], hub: Any) -> dict:
     confusions, latencies = [], []
     action_total = action_right = 0
     critical_total = critical_caught = 0
+    safe_total = safe_asked = 0
+    asked: list[dict] = []
+    action_misses: list[dict] = []
     rss_before = _rss_mb()
     started = time.perf_counter()
     laya_engine.engine().warm()  # raises LayaUnavailable; the router would swallow it
@@ -74,9 +77,17 @@ async def _evaluate(rows: list[dict], hub: Any) -> dict:
         if row.get("action") and decision is not None and decision.action:
             action_total += 1
             action_right += decision.action == row["action"]
+            if decision.action != row["action"]:
+                action_misses.append({"text": row["text"], "expected": row["action"],
+                                      "got": decision.action})
         if row.get("critical"):
             critical_total += 1
             critical_caught += bool(decision and (decision.critical or decision.needs_approval))
+        else:
+            safe_total += 1
+            if decision is not None and decision.action and decision.needs_approval:
+                safe_asked += 1
+                asked.append({"text": row["text"], "reason": decision.reason})
     n = len(rows)
     correct = sum(b["correct"] for b in per.values())
     report = {
@@ -93,8 +104,11 @@ async def _evaluate(rows: list[dict], hub: Any) -> dict:
     if action_total:
         report["action_accuracy"] = round(action_right / action_total, 4)
         report["action_n"] = action_total
+        report["action_misses"] = action_misses
     if critical_total:
         report["critical_caught"] = f"{critical_caught}/{critical_total}"
+    report["safe_asked"] = f"{safe_asked}/{safe_total}"
+    report["asked"] = asked
     return report
 
 
@@ -122,6 +136,8 @@ def format_report(report: dict) -> str:
                      f"(of {report['action_n']} with a known action)")
     if "critical_caught" in report:
         lines.append(f"critical flagged:  {report['critical_caught']}")
+    if "safe_asked" in report:
+        lines.append(f"asked on safe:     {report['safe_asked']}")
     lat = report["latency_ms"]
     lines.append(f"latency ms: load {report['load_ms']}, "
                  f"p50 {lat['p50']}, p95 {lat['p95']}, max {lat['max']}")
@@ -135,6 +151,14 @@ def format_report(report: dict) -> str:
         lines.append("misses:")
         for miss in report["confusions"]:
             lines.append(f"  {miss['expected']:>9} -> {str(miss['got']):<9} {miss['text']}")
+    if report.get("action_misses"):
+        lines.append("action misses:")
+        for miss in report["action_misses"]:
+            lines.append(f"  {miss['expected']:>14} -> {miss['got']:<14} {miss['text']}")
+    if report.get("asked"):
+        lines.append("asked on safe requests:")
+        for a in report["asked"]:
+            lines.append(f"  {a['text']}  [{a['reason']}]")
     return "\n".join(lines)
 
 
