@@ -298,6 +298,13 @@ def _zen_profile() -> Profile:
 # click-by-name. New chat lives in the sidebar, which may be collapsed.
 _CLAUDE_PROMPT = {"click_named": {"name": "Prompt|Reply|Message", "types": ["Edit", "Document"],
                                   "action": "focus"}}
+# The Codex desktop app (process ChatGPT.exe, package OpenAI.Codex). Its
+# composer is a contenteditable (OpenCLI's clis/codex/send.js takes the last
+# one); UIA reports it as an Edit or Document named by its placeholder.
+_CODEX_PROMPT = {"click_named": {"name": "Ask Codex|Ask for follow-up changes|Message|Prompt",
+                                 "types": ["Edit", "Document"], "action": "focus", "pick": "last"}}
+# Where vvhub's code skill puts a spoken prompt in each desktop app.
+PROMPT_BOXES: dict[str, Any] = {"claude_app": _CLAUDE_PROMPT, "codex_app": _CODEX_PROMPT}
 CLAUDE: dict[str, Any] = {
     "new chat|new conversation|new session": {"first_of": [
         {"click_named": "New chat|New session"},

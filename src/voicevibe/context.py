@@ -11,6 +11,9 @@ pointer (or the focus pin, see focus.py):
                             PNG in %LOCALAPPDATA%\\VoiceVibe\\crops + its OCR
                             text, browser URL
 
+The shallow bundle also carries `focused_element {name, type, class}` (the
+keyboard focus), which the code skill checks before it pastes a prompt.
+
 The hub adds the Windows-MCP region Snapshot / Zen DOM itself (it owns the
 MCP client); Voice Vibe never starts a second automation stack.
 
@@ -162,6 +165,19 @@ def _caret() -> str:
     return focused_element_text()
 
 
+def _focused() -> dict | None:
+    """Name / control type / class of the element with keyboard focus."""
+    if sys.platform != "win32":
+        return None
+    ua, _core = _uia()
+    element = ua.GetFocusedElement()
+    if element is None:
+        return None
+    return {"name": str(element.CurrentName or "").strip()[:200],
+            "type": _UIA_TYPES.get(element.CurrentControlType, "Unknown"),
+            "class": str(element.CurrentClassName or "")[:80]}
+
+
 def _selection() -> str:
     from .screen import selected_text
 
@@ -234,6 +250,7 @@ class ContextBuilder:
                  pointer: Callable[[], tuple[int, int]] = _pointer,
                  element_at: Callable[[tuple[int, int]], dict | None] = _element_at,
                  caret: Callable[[], str] = _caret,
+                 focused: Callable[[], dict | None] = _focused,
                  selection: Callable[[], str] = _selection,
                  grab: Callable[[Rect], Any] = _grab,
                  ocr: Callable[[Any], str] = _ocr,
@@ -252,6 +269,7 @@ class ContextBuilder:
                                    size=(int(size[0]), int(size[1])))
         self.window, self.window_at, self.windows = window, window_at, windows
         self.pointer, self.element_at, self.caret = pointer, element_at, caret
+        self.focused = focused
         self.selection, self.grab, self.ocr, self.browser_url = selection, grab, ocr, browser_url
         self._crops = crops_dir
         self.clock = clock
@@ -312,6 +330,9 @@ class ContextBuilder:
             element = self._try("pointer element", self.element_at, point)
             if element:
                 bundle["pointer_element"] = element
+            focused = self._try("focused element", self.focused)
+            if focused:
+                bundle["focused_element"] = focused
         if region:
             bundle["region"] = {"rect": list(region), "image_ref": None}
         browser = BROWSERS.get(bundle["window"]["process"].lower())

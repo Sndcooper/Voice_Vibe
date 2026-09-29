@@ -68,6 +68,7 @@ class Sources:
             window=lambda: dict(self.front), window_at=lambda p: dict(self.under),
             windows=lambda: [dict(self.front), *self.others], pointer=lambda: self.point,
             element_at=lambda p: dict(ELEMENT), caret=lambda: "def walk(self):\n    return 1",
+            focused=lambda: {"name": "Editor content", "type": "Edit", "class": ""},
             selection=self._selection, grab=self._grab, ocr=lambda img: "Traceback: KeyError",
             browser_url=lambda hwnd: "https://example.org/laya", crops_dir=crops,
             clock=lambda: 1_700_000_000.0, **kw)
@@ -99,6 +100,7 @@ class BundleTests(Base):
         self.assertEqual(b["window"], {"hwnd": 11, "title": CODE["title"], "process": "Code.exe"})
         self.assertEqual(b["pointer_element"]["name"], "Run and Debug")
         self.assertEqual(len(b["pointer_element"]["ancestors"]), 2)
+        self.assertEqual(b["focused_element"]["type"], "Edit")
         self.assertTrue(b["caret_text"].startswith("def walk"))
         self.assertEqual(b["region"]["rect"], [560, 350, 1360, 850])
         self.assertNotIn("ocr_text", b["region"])
