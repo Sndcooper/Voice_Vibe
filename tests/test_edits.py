@@ -116,12 +116,17 @@ class TestAppEdits(unittest.TestCase):
 
     def say(self, text: str, on: bool = True, previous: str = PREVIOUS):  # noqa: ANN201
         vv = app.VoiceVibe.__new__(app.VoiceVibe)
-        vv.config = SimpleNamespace(output={"spoken_edits": on}, feedback={})
+        vv.config = SimpleNamespace(output={}, control={"spoken_edits": on}, feedback={})
         vv.inserter = FakeInserter()
         vv._last_inserted = previous
         vv.history = vv.overlay = vv.beeper = vv.voice = _Quiet()
+        vv.router = _Quiet()
+        vv.executor = app.Executor(keyboard=stubs.FakeController(),
+                                   confirmer=lambda *args: True)
+        vv.responder = SimpleNamespace(respond=lambda text: SimpleNamespace(handled=False))
         with mock.patch.object(app, "focused_window", lambda: "Notepad"):
-            vv._do_insert(text, 0.1)
+            if not vv._do_session_extra(text, "computer " + text, 0.1):
+                vv._do_insert(text, 0.1)
         return vv
 
     def test_replace_touches_only_the_changed_tail(self) -> None:

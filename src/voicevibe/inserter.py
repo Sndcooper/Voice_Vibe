@@ -20,7 +20,7 @@ from typing import Any
 import pyperclip
 from pynput.keyboard import Controller, Key
 
-from .polish import polish as polish_text
+from .polish import format_list, polish as polish_text
 
 log = logging.getLogger(__name__)
 
@@ -188,12 +188,16 @@ class Inserter:
             return "", [{"say": "press enter", "keys": "enter", "ends_dictation": True}]
         return text, []
 
-    def prepare(self, text: str) -> tuple[str, list[dict[str, str]]]:
+    def prepare(self, text: str, *, format_lists: bool = False) -> tuple[str, list[dict[str, str]]]:
         """Split a transcript into text to insert and commands to fire after it."""
         if self.cfg.get("raw_dictation", False):
             return text.strip(), []
         normalized = self._normalize(text)
         remaining, commands = self._extract_commands(normalized)
+        if format_lists and self.cfg.get("polish", True):
+            formatted = format_list(remaining)
+            if formatted is not None:
+                return formatted + "\n", commands
         return self._finish(remaining, trailing_space=not commands), commands
 
     def press(self, spec: str) -> bool:
@@ -294,12 +298,12 @@ class Inserter:
         except Exception as exc:
             log.error("Insertion failed (%s).", exc)
 
-    def insert(self, text: str) -> tuple[str, list[dict[str, str]]]:
+    def insert(self, text: str, *, format_lists: bool = False) -> tuple[str, list[dict[str, str]]]:
         """Insert the text, then fire any trailing voice commands.
 
         Returns (text inserted, commands actually fired).
         """
-        body, commands = self.prepare(text)
+        body, commands = self.prepare(text, format_lists=format_lists)
         mode = str(self.cfg.get("mode", "paste")).lower()
 
         if body:

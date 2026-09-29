@@ -134,9 +134,10 @@ class TestSessionWiring(unittest.TestCase):
         vv._ends_dictation = False
         vv.beeper = vv.overlay = vv.history = _Quiet()
         vv.armed_reasons = []
+        vv._do_session_extra = lambda *args: False
         vv._arm = vv.armed_reasons.append
         vv.inserted = []
-        vv._do_insert = lambda text, elapsed: vv.inserted.append(text)
+        vv._do_insert = lambda text, elapsed, **kwargs: vv.inserted.append(text)
         return vv
 
     def test_unhandled_command_is_typed_as_heard(self) -> None:

@@ -127,6 +127,13 @@ class TestRouting(unittest.TestCase):
         vv._transcribe_job(self.seconds(1), app.INSERT, armed=False)
         vv.command_transcriber.transcribe.assert_not_called()
 
+    def test_pending_session_command_cannot_change_plain_dictation_model(self) -> None:
+        for action in (app.INSERT, app.SPEAK):
+            vv = self.make(expects=True)
+            self.assertEqual(vv._transcribe_job(self.seconds(1), action, armed=False),
+                             "the main transcript")
+            vv.command_transcriber.transcribe.assert_not_called()
+
     def test_without_a_command_model_everything_is_main(self) -> None:
         vv = self.make(fast=False)
         self.assertEqual(vv._transcribe_job(self.seconds(1), app.SESSION, armed=True),

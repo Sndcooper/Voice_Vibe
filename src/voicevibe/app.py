@@ -12,7 +12,7 @@ import numpy as np
 
 from .airoot import AirootBridge
 from .audio import Recorder, SegmentRecorder, device_label
-from .actions import DEFAULT_CONFIRM_TIMEOUT, DEFAULT_CONFIRM_WORDS, Executor
+from .actions import Cancelled, DEFAULT_CONFIRM_TIMEOUT, DEFAULT_CONFIRM_WORDS, Executor
 from .config import Config
 from .confirm import DEFAULT_NO, DEFAULT_YES, VoiceConfirmer
 from .control import Router
@@ -363,6 +363,7 @@ class VoiceVibe:
 
         self._wake_state = ARMED
         self._confirm_wake = False
+        self._last_inserted = ""
         if self.detector is not None:
             self.detector.reset()
         self._set_wake_bias(True)
@@ -588,7 +589,7 @@ class VoiceVibe:
                 model.initial_prompt = prompt
         if fast is None:
             return self.transcriber.transcribe(audio)
-        if armed or self.router.expects_command():
+        if action == SESSION and (armed or self.router.expects_command()):
             return fast.transcribe(audio)
         limit = float(self.config.model.get("command_max_seconds", 3.0) or 0)
         seconds = len(audio) / int(self.config.audio["sample_rate"])
@@ -688,6 +689,7 @@ class VoiceVibe:
         if command is not None:
             route = self.router.route(command)
             if route.handled:
+                self._last_inserted = ""
                 log.info("[%.2fs] -> command | %s", elapsed, command.strip())
                 self.history.add(action="command", heard=text.strip(),
                                  seconds=round(elapsed, 2))
@@ -698,21 +700,50 @@ class VoiceVibe:
                 self.beeper.done()
                 return
             log.debug("Command not handled, dictating instead: %s", command.strip())
-        self._do_insert(text, elapsed)
-
-    def _do_insert(self, text: str, elapsed: float) -> None:
-        # Opt-in: "scratch that", "delete the last two words", "replace X
-        # with Y" rewrite the previous utterance instead of being typed.
-        if self.config.output.get("spoken_edits", False) and self._last_inserted:
-            edit = parse_edit(text)
-            if edit is not None and edit_applies(edit[0], self._last_inserted, **edit[1]):
-                self._do_edit(edit[0], edit[1], text, elapsed)
+            if self._do_session_extra(command, text, elapsed):
                 return
+        self._do_insert(text, elapsed, session=True)
+
+    def _do_session_extra(self, command: str, heard: str, elapsed: float) -> bool:
+        """Restore assistant actions and edits only behind the session prefix."""
+        if self.config.output.get("raw_dictation", False):
+            return False
+        edit = parse_edit(command)
+        if (self.config.control.get("spoken_edits", True) and edit is not None
+                and edit_applies(edit[0], self._last_inserted, **edit[1])):
+            self.router.stop()
+            try:
+                # Use the same trigger-word gate as keyboard/UI commands.
+                self.executor.run([], command=command)
+            except Cancelled:
+                self.overlay.show("Cancelled")
+                return True
+            self._do_edit(edit[0], edit[1], heard, elapsed)
+            return True
+        reply = self.responder.respond(command)
+        if not reply.handled:
+            return False
+        self.router.stop()
+        self._last_inserted = ""
+        self._ends_dictation = False
+        self.history.add(action=reply.action, heard=heard.strip(), spoken=reply.speak,
+                         seconds=round(elapsed, 2))
+        self.overlay.show(reply.caption or reply.speak)
+        self.airoot.show_transcript(reply.caption or reply.speak, "Reply")
+        if reply.speak:
+            self.voice.say(reply.speak)
+        self.beeper.done()
+        return True
+
+    def _do_insert(self, text: str, elapsed: float, *, session: bool = False) -> None:
         target = focused_window() or "unknown window"
-        inserted, fired = self.inserter.insert(text)
+        if session and self.config.control.get("format_lists", True):
+            inserted, fired = self.inserter.insert(text, format_lists=True)
+        else:
+            inserted, fired = self.inserter.insert(text)
         self._last_fired = fired
         # Remembered so a following "scratch that" knows what to take back.
-        self._last_inserted = inserted if not fired else ""
+        self._last_inserted = inserted if session and not fired else ""
         keys = f"  +[{' '.join(c['keys'] for c in fired)}]" if fired else ""
         if self.config.feedback.get("log_transcripts", True):
             log.info("[%.2fs] -> %s | %s%s", elapsed, target, inserted.strip(), keys)

@@ -123,6 +123,8 @@ DEFAULTS: dict[str, Any] = {
     },
     "control": {
         "enabled": False,
+        "spoken_edits": True,
+        "format_lists": True,
         "prefixes": ["computer"],
         "scroll_amount": 5,
         "keep_scrolling_limit": 30.0,

@@ -96,16 +96,10 @@ type_delay = 0.004
 add_trailing_space = true
 strip_trailing_period = false
 lowercase = false
-# Basic polish only: capitalisation, spacing, and sentence punctuation.
-# No automatic lists, word replacements, spoken edits, or assistant actions --
-# except the two opt-ins below.
+# Plain dictation: basic capitals, spacing and sentence punctuation only.
+# Session-only edits and lists are configured under [control].
 raw_dictation = false
 polish = true
-# Spoken edits of the previous utterance: "scratch that", "cap that",
-# "all caps that", "lowercase that", "new paragraph", "delete the last two
-# words", "replace Tuesday with Wednesday" (only if Tuesday is in it; otherwise
-# it is typed). The whole utterance must be the edit.
-spoken_edits = false
 # Apply the [[replacements]] table to dictation (whole words, any case).
 # `python -m voicevibe --suggest-replacements` proposes rows from your history.
 apply_replacements = false
@@ -239,13 +233,13 @@ keep_days = 30
 # Replies. There is no language model here: answers are matched and extracted,
 # never generated, so this costs no extra memory and cannot invent an answer.
 [assistant]
-enabled = false
+enabled = true
 # "open <app>" launches from the allowlist above.
 launch_apps = true
 # "what's on my screen", "what is this error", "read this", "where am I".
 answer_screen = true
 # Index Start Menu shortcuts at startup so most apps work without [[apps]] rows.
-discover_apps = false
+discover_apps = true
 # How close a spoken name must be to an app name, 0 to 1. Lower matches more
 # loosely and risks opening the wrong thing.
 match_threshold = 0.78
@@ -278,7 +272,11 @@ voice_rate = 1
 # A [[commands]] row whose `say` matches a command replaces the built-in one,
 # e.g. say = "delete line", keys = "ctrl+shift+k" for VS Code.
 [control]
-enabled = false
+enabled = true
+# Prefixed edits of the previous session utterance; never plain dictation.
+spoken_edits = true
+# Format enumerations in session dictation.
+format_lists = true
 prefixes = ["computer"]
 # Wheel notches for a plain "scroll down". Each notch is ~3 lines.
 scroll_amount = 5

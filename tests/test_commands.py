@@ -502,7 +502,7 @@ class TestAppWiring(unittest.TestCase):
         vv.voice = FakeVoice()
         vv._arm = lambda reason: None
         vv.inserted = []
-        vv._do_insert = lambda text, elapsed: vv.inserted.append(text)
+        vv._do_insert = lambda text, elapsed, **kwargs: vv.inserted.append(text)
         return vv
 
     def test_spoken_replies_are_said(self) -> None:

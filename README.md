@@ -22,18 +22,15 @@
 
 Voice Vibe turns your microphone into a system-wide input method. Click any text field—an AI chat, browser, code editor, terminal, Notepad, or search box—then speak. Transcription runs locally through Whisper and the result appears at the focused cursor.
 
-Dictation now uses basic polishing: capitalisation, spacing, and sentence punctuation. Automatic lists, word replacements, spoken edits, and assistant actions are disabled in the dictation path. The only voice key command is **press enter**, spoken as a separate utterance; mentions inside sentences remain text. Set `output.polish = false` to disable polishing, or `raw_dictation = true` for literal output with no commands. The model and precision stay the same; beam size 3 and deterministic decoding replace greedy decoding and random fallback. This can add processing time. VAD remains opt-in, and quiet speech is not discarded by amplitude gates.
+There are three separate modes:
 
-The feature descriptions below for legacy commands, lists, and assistant actions describe earlier behavior; they are not active in the simplified dictation flow.
+- **Ctrl+Alt+Space ? plain dictation:** tap to record, tap again to transcribe and paste. Basic punctuation and capitalization apply. App actions, wake matching, spoken edits, and list formatting do not run here. A separate **press enter** utterance sends Enter; `output.raw_dictation = true` makes it literal too.
+- **Ctrl+Alt+W ? voice control:** arm the session, say **hey computer**, then start commands with **computer**: `computer open notepad`, `computer scroll down`, `computer what's on my screen`. Ordinary utterances remain dictation. Say `press enter` separately to submit and re-arm.
+- **Ctrl+Alt+Shift+Space ? speech output:** record, transcribe, and read the transcript aloud using optional Soprano TTS.
 
-It supports three workflows:
+The checked-in config enables session control and assistant replies. A configuration built from code defaults keeps these opt-in. Session edits use `control.spoken_edits`; session list formatting uses `control.format_lists`. The old `output.spoken_edits` option no longer enables edits in plain dictation.
 
-- **Ctrl+Alt+Space — one-shot dictation:** tap once to record, tap again to transcribe and paste.
-- **Ctrl+Alt+W - wake-word session:** leave the session armed, say **hey computer**, dictate, then pause to paste. Say **press enter** as a separate utterance to submit and re-arm.
-- **Ctrl+Alt+Shift+Space — speech output:** record speech, transcribe it, and read the result aloud with Soprano TTS.
-
-> [!IMPORTANT]
-> A wake-word session must keep the microphone open locally to hear the wake phrase. While armed, background utterances may be segmented and transcribed locally for wake-word detection, but they are **not typed, saved, or sent to a cloud service**.
+Armed sessions keep the microphone open locally. With the default Whisper wake engine, background utterances may be decoded to detect the wake phrase. Unmatched speech is not inserted or saved to turn history. `wake.log_ignored` controls whether it is printed to the local log.
 
 ## Why Voice Vibe?
 
@@ -125,8 +122,7 @@ uv pip install -e ".[tts]"      # Soprano neural TTS for the speak hotkey (~3 GB
 > up with — `tiny.en` on a 2-core laptop, `small.en` on 8+ cores, and
 > `large-v3-turbo` only when a GPU is present. A big model that takes eight
 > seconds per sentence is unusable for dictation no matter how accurate it is.
-> Run `.
-un.bat --check` to see what it will choose. The first run downloads
+> Run `.\run.bat --check` to see what it will choose. The first run downloads
 > that model once; everything after that is local.
 
 ### 4. Verify and launch
@@ -142,8 +138,7 @@ use. `cuda none -- CPU mode (supported)` is a normal, fully working result.
 `run.bat` starts Voice Vibe **in the background**: no console window appears,
 and closing windows will not stop it. Look for the floating orb in the corner of
 your screen and the tray icon. To watch the log live instead, use
-`.
-un.bat --console`.
+`.\run.bat --console`.
 
 ## How to use
 
@@ -223,35 +218,20 @@ Recordings shorter than `audio.min_duration` are ignored, preventing accidental 
 
 ## Wake-word session
 
-The session (Ctrl+Alt+W) is designed for hands-free conversations with AI tools.
-
 ```text
-Press Ctrl+Alt+W
-  └─ ARMED: background speech is ignored
-       └─ “Hey computer”
-            └─ DICTATING
-                 └─ “Explain this function, enter”
-                      ├─ inserts “Explain this function”
-                      ├─ presses Enter
-                      └─ returns to ARMED
-Press Ctrl+Alt+W again to close the session
+Ctrl+Alt+W                         -> armed; background speech is ignored
+"hey computer"                    -> awake
+"computer open notepad"           -> launch an allowlisted app
+"computer scroll down"            -> scroll
+"computer what's on my screen"    -> reply using UIA/OCR
+"draft the meeting notes"         -> insert normal dictation
+"computer scratch that"           -> erase the previous session utterance
+"bullet milk bullet eggs"         -> insert a formatted list
+"press enter"                     -> Enter, then re-arm
+Ctrl+Alt+W                         -> close the session
 ```
 
-You can wake and dictate in one sentence:
-
-```text
-“Hey computer, create a responsive login page, enter”
-```
-
-Or wake first, then speak across multiple segmented utterances:
-
-```text
-“Hey computer”
-“Create a Python API”
-“Use FastAPI and SQLite, enter”
-```
-
-The first two pieces are inserted as dictation arrives; the final `enter` submits and returns the session to armed mode.
+Wake and command can share an utterance: **hey computer, computer open notepad**. The wake phrase and command prefix are separate gates. Unrecognized prefixed commands fall back to dictation with the prefix retained. Spoken edits assume the cursor is still immediately after the preceding session utterance; intervening commands clear that edit context.
 
 ### Wake phrases
 
@@ -327,62 +307,37 @@ Test it directly:
 Soprano is English-only and does not clone your voice. It uses its own generated voice. The first use downloads and loads its model; set `speech.preload = true` to pay that startup cost when Voice Vibe launches instead.
 ## Voice commands
 
-A command is recognized only at the **end** of a transcript. The command phrase is removed, then the configured key combination is pressed.
+Commands run only in an awake Ctrl+Alt+W session and require a leading **computer** prefix. The checked-in `[control]` configuration enables them.
 
-| Spoken phrase | Inserted text | Keyboard action |
-| --- | --- | --- |
-| `fix the login bug enter` | `fix the login bug` | Enter |
-| `enter` | nothing | Enter |
-| `looks good send it` | `looks good` | Enter |
-| `retry enter enter` | `retry` | Enter twice |
+| Example | Action |
+| --- | --- |
+| `computer save` / `computer undo` | Editing shortcuts |
+| `computer scroll down` / `computer keep scrolling` | Scroll once / repeatedly |
+| `stop` while scrolling | Stop the repeat, even after re-arming |
+| `computer new tab` / `computer next tab` | Browser tabs |
+| `computer minimize` / `computer switch to notepad` | Window control |
+| `computer click Settings` / `computer show numbers` | UI Automation with OCR fallback |
+| `computer click 7` | Choose a numbered target |
+| `computer replace Tuesday with Wednesday` | Edit the previous session utterance |
 
-Twenty commands ship enabled in [`config.toml`](config.toml):
+App profiles take precedence over `[[commands]]`, then built-in global commands, then exact UIA/OCR targets. Profiles cover Explorer, Zen, Claude, and ChatGPT. Add custom profiles under `[[profiles]]` in `config.toml`.
 
-| Say | Does | Ends dictation |
-| --- | --- | --- |
-| `enter`, `send it`, `submit` | Enter | yes |
-| `save it` | Ctrl+S | yes |
-| `close tab` | Ctrl+W | yes |
-| `switch window` | Alt+Tab | yes |
-| `never mind that` | Esc | yes |
-| `select all` | Ctrl+A | no |
-| `copy that`, `cut that`, `paste that` | Ctrl+C / X / V | no |
-| `undo that`, `redo that` | Ctrl+Z / Ctrl+Y | no |
-| `find it` | Ctrl+F | no |
-| `next field`, `go back` | Tab / Shift+Tab | no |
-| `scroll down`, `scroll up` | Page Down / Page Up | no |
-| `go to the top`, `go to the end` | Ctrl+Home / Ctrl+End | no |
+Dangerous trigger words (including delete, uninstall, send, buy) request spoken confirmation. Only an explicit confirmation proceeds; cancellation or timeout stops the action. Lock always asks. These gates also apply to restored spoken deletion edits.
 
-`ends_dictation` controls whether firing the command sends a wake-word session
-back to armed. Submitting should; moving to the next field should not.
-
-Delete or edit any of them, or add your own.
-
-Add arbitrary key combinations:
+`[[commands]]` rows customize prefixed session shortcuts, for example:
 
 ```toml
 [[commands]]
 say = "send message"
 keys = "ctrl+enter"
-
-[[commands]]
-say = "next field"
-keys = "tab"
-ends_dictation = false
-
-[[commands]]
-say = "close this"
-keys = "esc"
+ends_dictation = true
 ```
 
-Supported keys include letters, digits, `enter`, `tab`, `esc`, `space`, `backspace`, `delete`, arrows, `home`, `end`, `page_up`, `page_down`, F1–F12, and modifier combinations using `ctrl`, `shift`, `alt`, or `win`.
-
-Matching respects boundaries. `center`, `recenter`, `epicenter`, and `re-enter` do not trigger the `enter` command. “What does the enter key do?” also remains normal text because `enter` is not the final phrase.
+In plain dictation, only the separate utterance **press enter** is a key command. Trailing `enter` or `send it` in a sentence stays text.
 
 ## Replies
 
-Voice Vibe answers. Ask it something and it speaks back through the Windows
-voice and shows the answer beside the orb.
+In an awake session, prefix requests with **computer**. Voice Vibe speaks replies through the Windows voice and shows them in the overlay.
 
 | Say | What happens |
 | --- | --- |
@@ -602,7 +557,7 @@ Set `enabled = false` to make the session insert every segmented utterance witho
 | `add_trailing_space` | `true` | Append a space after normal dictation |
 | `strip_trailing_period` | `false` | Remove a final period |
 | `lowercase` | `false` | Lowercase the transcript |
-| `voice_commands` | `true` | Enable `[[commands]]` |
+| `voice_commands` | `true` | Enable the separate `press enter` utterance |
 | `command_delay` | `0.12` | Wait between insertion and key action |
 
 Raise `command_delay` if a target submits before the pasted text has landed.
@@ -825,7 +780,7 @@ If the title is the terminal, the terminal had focus. Click the desired field an
 - Prefer two common words, such as `hey computer`, over a rare isolated word.
 - Add consistent mishearings to `wake.phrases`.
 - Leave `wake.bias_prompt = true`.
-- Lower `wake.fuzzy` only to make matching stricter; raise it cautiously.
+- Raise `wake.fuzzy` to make matching stricter; lower it cautiously.
 - Speak after the session-open beep and leave a short pause afterward.
 
 ### Wake phrase fires accidentally
@@ -871,8 +826,7 @@ Windows prevents a normal process from injecting input into an administrator-ele
 
 ### Dictation is slow
 
-Check what model is loaded with `.
-un.bat --check`. If `[model].name` is
+Check what model is loaded with `.\run.bat --check`. If `[model].name` is
 pinned to something large, set it back to `"auto"`. On CPU, `tiny.en` and
 `base.en` are several times faster than `small.en`, and far faster than
 `large-v3-turbo`, which is not a sensible CPU choice on a budget machine.
@@ -903,8 +857,7 @@ deliver key events from an elevated window to a normal one.
 
 ### The Airoot overlay does not appear
 
-Run `.
-un.bat --console -v` and look for `[airoot] is enabled but the overlay
+Run `.\run.bat --console -v` and look for `[airoot] is enabled but the overlay
 was not found` — that means `[airoot].exe` is wrong. The path must point at the
 file itself, not its folder. If another copy of the overlay is already running,
 Voice Vibe uses that one rather than starting its own.

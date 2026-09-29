@@ -184,7 +184,7 @@ class TestAppHandOver(unittest.TestCase):
         vv._last_activity = 0.0
         vv._ends_dictation = False
         vv.inserted = []
-        vv._do_insert = lambda text, elapsed: vv.inserted.append(text)
+        vv._do_insert = lambda text, elapsed, **kwargs: vv.inserted.append(text)
         return vv
 
     def test_the_model_wakes_the_session(self) -> None:
