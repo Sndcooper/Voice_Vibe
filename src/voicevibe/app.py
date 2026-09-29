@@ -15,6 +15,7 @@ from .audio import Recorder, SegmentRecorder, device_label
 from .actions import Cancelled, DEFAULT_CONFIRM_TIMEOUT, DEFAULT_CONFIRM_WORDS, Executor
 from .config import Config
 from .confirm import DEFAULT_NO, DEFAULT_YES, VoiceConfirmer
+from .context import ContextBuilder, LocalScreen, purge_crops
 from .control import Router
 from .feedback import Beeper, Tray
 from .history import History, data_dir
@@ -57,6 +58,8 @@ class VoiceVibe:
     PARTIAL_WINDOW = 15.0
     # Small Whisper for short command-like utterances; None = use the main one.
     command_transcriber: Transcriber | None = None
+    # Screen context + local screen phrases; None in a partly built instance.
+    local_screen: LocalScreen | None = None
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -104,6 +107,10 @@ class VoiceVibe:
         self.airoot.set_device(config.input_device)
         # The microphone in use; re-chosen before every recording.
         self._mic = config.input_device
+        # Screen context v2 (context.py): the bundle hub requests carry, the
+        # "focus on my cursor" pin, the privacy guard, local screen phrases.
+        self.context = ContextBuilder(config.screen)
+        self.local_screen = LocalScreen(self.context)
 
         control = config.control
         timeout = float(control.get("confirm_timeout", DEFAULT_CONFIRM_TIMEOUT))
@@ -702,6 +709,20 @@ class VoiceVibe:
         """
         command = self.router.split(text)
         if command is not None:
+            # Exact screen phrases first: the router's "focus on <window>"
+            # rule would otherwise read "focus on my cursor" as a window name.
+            local = self.local_screen.handle(command) if self.local_screen else None
+            if local is not None:
+                self.router.stop()
+                self._last_inserted = ""
+                log.info("[%.2fs] -> screen | %s", elapsed, command.strip())
+                self.history.add(action=local.action, heard=text.strip(), spoken=local.speak,
+                                 seconds=round(elapsed, 2))
+                self.overlay.show(local.caption or local.speak)
+                if local.speak:
+                    self.voice.say(local.speak)
+                self.beeper.done()
+                return
             route = self.router.route(command)
             if route.handled:
                 self._last_inserted = ""
@@ -906,6 +927,7 @@ class VoiceVibe:
 
         self.overlay.start()
         self.airoot.start()
+        threading.Thread(target=self._warm_context, name="context", daemon=True).start()
         threading.Thread(target=self._worker, name="worker", daemon=True).start()
         threading.Thread(target=self._watchdog, name="watchdog", daemon=True).start()
         if self._partials_enabled():
@@ -939,10 +961,20 @@ class VoiceVibe:
         self._stop.wait()
         self.tray.stop()
 
+    def _warm_context(self) -> None:
+        """Drop crops past the 2-day retention; pay UIA's first-call cost now."""
+        try:
+            purge_crops()
+            self.context.warm()
+        except Exception as exc:  # noqa: BLE001 - optional, never fatal
+            log.debug("context warm-up failed: %s", exc)
+
     def _shutdown(self) -> None:
         self._stop.set()
         self.overlay.stop()
         self.badges.stop()
+        if self.local_screen is not None:
+            self.context.pin.stop()
         self.airoot.stop()
         self.hotkeys.stop()
         self.router.stop()

@@ -154,6 +154,11 @@ DEFAULTS: dict[str, Any] = {
         "use_uia": True,
         "use_ocr": True,
         "max_chars": 4000,
+        # Screen context v2 (context.py / focus.py / privacy.py).
+        "focus_seconds": 180,
+        "region_size": [800, 500],
+        "privacy_deny_processes": [],
+        "privacy_deny_titles": [],
     },
 }
 

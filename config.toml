@@ -364,3 +364,12 @@ use_uia = true
 # No model download and no resident memory: it is the OS engine.
 use_ocr = true
 max_chars = 4000
+# "computer focus on my cursor": the pinned region (pixels) and how long it
+# stays pinned before it lapses on its own ("computer unfocus" ends it now).
+focus_seconds = 180
+region_size = [800, 500]
+# Privacy guard: windows whose text, OCR and crops never leave Voice Vibe.
+# Password managers, banking/payments and private browsing are always
+# blocked; these lists can only add to that. Titles match whole words.
+privacy_deny_processes = []
+privacy_deny_titles = []
