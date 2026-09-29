@@ -11,7 +11,7 @@ import time
 import numpy as np
 
 from .airoot import AirootBridge
-from .audio import Recorder, SegmentRecorder
+from .audio import Recorder, SegmentRecorder, device_label
 from .actions import DEFAULT_CONFIRM_TIMEOUT, DEFAULT_CONFIRM_WORDS, Executor
 from .config import Config
 from .confirm import DEFAULT_NO, DEFAULT_YES, VoiceConfirmer
@@ -52,6 +52,7 @@ class VoiceVibe:
     # When a tap-to-toggle hotkey last acted; see toggle().
     _last_toggle = float("-inf")
     TOGGLE_DEBOUNCE = 0.4
+    _mic: int | str | None = None
     # Small Whisper for short command-like utterances; None = use the main one.
     command_transcriber: Transcriber | None = None
 
@@ -99,6 +100,8 @@ class VoiceVibe:
         # The overlay meters the same microphone dictation records from,
         # rather than whatever Windows has as the default.
         self.airoot.set_device(config.input_device)
+        # The microphone in use; re-chosen before every recording.
+        self._mic = config.input_device
 
         control = config.control
         timeout = float(control.get("confirm_timeout", DEFAULT_CONFIRM_TIMEOUT))
@@ -193,10 +196,34 @@ class VoiceVibe:
         )
 
     # -------------------------------------------------------------- recording
+    def _choose_microphone(self) -> None:
+        """Pick the mic again just before recording (no stream is open yet).
+
+        Follows the Windows default input whenever it is a real microphone,
+        so switching mics in Windows or plugging in a headset takes effect on
+        the next recording, without a restart -- and a device that vanished
+        is not reused. Never a loopback such as Stereo Mix.
+        """
+        if self.config.input_device_pinned:
+            return
+        try:
+            device = self.config.refresh_input_device()
+        except Exception as exc:
+            log.debug("could not re-check the microphone: %s", exc)
+            return
+        if device == self._mic:
+            return
+        self._mic = device
+        self.recorder.device = device
+        self.session.device = device
+        self.airoot.set_device(device)
+        log.info("Microphone: %s.", device_label(device))
+
     def _begin(self, action: str) -> None:
         with self._state_lock:
             if self.recorder.is_recording:
                 return
+            self._choose_microphone()
             try:
                 self.recorder.start()
             except Exception as exc:
@@ -326,6 +353,7 @@ class VoiceVibe:
             self.beeper.error()
             return
 
+        self._choose_microphone()
         try:
             self.session.start()
         except Exception as exc:

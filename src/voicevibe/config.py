@@ -191,8 +191,7 @@ class Config:
 
         # Empty means "the system default" -- except when that default is a
         # loopback, which silently records the speakers instead of speech.
-        # Resolved once: every caller would otherwise re-scan the device list
-        # and repeat the warning.
+        # Memoised: callers read this often. refresh_input_device() re-checks.
         if "_resolved" not in self._device_cache:
             from .audio import default_input_device
 
@@ -200,6 +199,22 @@ class Config:
                 self.audio.get("input_priority", [])
             )
         return self._device_cache["_resolved"]
+
+    @property
+    def input_device_pinned(self) -> bool:
+        """[audio].input_device names a device, so nothing is auto-chosen."""
+        return self.audio.get("input_device", "") not in ("", None)
+
+    def refresh_input_device(self) -> int | str | None:
+        """Re-read the devices and choose again (the Windows default may have
+        changed, or a headset been plugged in or out). No stream may be open."""
+        if self.input_device_pinned:
+            return self.input_device
+        from .audio import refresh_devices
+
+        refresh_devices()
+        self._device_cache.pop("_resolved", None)
+        return self.input_device
 
 
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

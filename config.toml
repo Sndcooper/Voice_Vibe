@@ -67,13 +67,15 @@ command_max_seconds = 3.0
 
 [audio]
 sample_rate = 16000
-# Empty uses the system default microphone. Run with --list-devices to see indices.
+# Empty follows the Windows default input (Settings > System > Sound > Input),
+# re-checked before every recording, so switching mics there or plugging in a
+# headset takes effect without restarting. A number (--list-devices) pins one.
 input_device = ""
-# First available input wins; the overlay receives the same device index.
-# Names match exactly, or as a substring. "Microphone (Realtek(R) Audio)" is a
-# mic plugged into the jack; without one, the built-in "Microphone Array" is
-# used. Never list "Stereo Mix": it records what the speakers play, so every
-# dictation is silence and Whisper makes up "Thank you." for it.
+# Used only when the Windows default is a loopback such as Stereo Mix (which
+# records what the speakers play, so every dictation would be silence): the
+# first of these that exists wins. Names match exactly, or as a substring.
+# "Microphone (Realtek(R) Audio)" is a mic in the jack; otherwise the built-in
+# "Microphone Array". Never list "Stereo Mix".
 input_priority = ["Microphone (Realtek(R) Audio)", "Microphone Array"]
 # Ignore recordings shorter than this (accidental hotkey taps), in seconds.
 min_duration = 0.25

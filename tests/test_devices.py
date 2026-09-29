@@ -95,11 +95,21 @@ class DeviceSelectionTest(unittest.TestCase):
         )
         self.assertEqual(chosen, 2)
 
-    def test_explicit_stereo_mix_fallback_beats_other_microphones(self) -> None:
+    def test_a_real_default_beats_even_an_explicit_stereo_mix(self) -> None:
+        # Was the opposite until 2026-09-29: an explicit "Stereo Mix" entry
+        # won over a real default mic, and dictation recorded silence. The
+        # Windows default now wins whenever it is a real microphone.
+        chosen = self.resolve(
+            [("Microphone Array", 2), ("Stereo Mix (Realtek(R) Audio)", 2)],
+            default=0, priority=["Microphone (Realtek(R) Audio)", "Stereo Mix"],
+        )
+        self.assertIsNone(chosen)
+
+    def test_explicit_stereo_mix_is_still_honoured_when_the_default_is_a_loopback(self) -> None:
         with self.assertLogs("voicevibe.audio", level="WARNING"):
             chosen = self.resolve(
                 [("Microphone Array", 2), ("Stereo Mix (Realtek(R) Audio)", 2)],
-                default=0, priority=["Microphone (Realtek(R) Audio)", "Stereo Mix"],
+                default=1, priority=["Microphone (Realtek(R) Audio)", "Stereo Mix"],
             )
         self.assertEqual(chosen, 1)
 
@@ -111,6 +121,14 @@ class DeviceSelectionTest(unittest.TestCase):
                          priority=["Stereo Mix"])
         self.assertIn("loopback", logs.output[0])
 
+    def test_a_real_windows_default_beats_the_priority_list(self) -> None:
+        # Choosing a mic in Windows' sound settings is what gets recorded.
+        chosen = self.resolve(
+            [("Microphone Array (Realtek(R) Au", 2), ("Headset Microphone", 2)], default=1,
+            priority=["Microphone Array"],
+        )
+        self.assertIsNone(chosen)  # None = PortAudio's default, i.e. Windows'
+
     def test_built_in_array_is_the_fallback_when_no_jack_mic(self) -> None:
         # The shipped config: MME truncates names to 31 characters, so the
         # array is matched as a substring.
@@ -120,6 +138,88 @@ class DeviceSelectionTest(unittest.TestCase):
             priority=["Microphone (Realtek(R) Audio)", "Microphone Array"],
         )
         self.assertEqual(chosen, 2)
+
+
+class RefreshTest(unittest.TestCase):
+    """PortAudio only sees new devices / a new Windows default after a re-init."""
+
+    def load(self, playing: bool | None):  # noqa: ANN201
+        module = fake_sounddevice([("Microphone Array", 2)], 0)
+        module.calls = []
+        module._terminate = lambda: module.calls.append("terminate")
+        module._initialize = lambda: module.calls.append("initialize")
+
+        def get_stream():  # noqa: ANN202
+            if playing is None:
+                raise RuntimeError("play()/rec()/playrec() was not called yet")
+            return types.SimpleNamespace(active=playing)
+
+        module.get_stream = get_stream
+        sys.modules["sounddevice"] = module
+        for name in [n for n in sys.modules if n.startswith("voicevibe.")]:
+            del sys.modules[name]
+        from voicevibe.audio import refresh_devices
+
+        return module, refresh_devices
+
+    def tearDown(self) -> None:
+        sys.modules.pop("sounddevice", None)
+        for name in [n for n in sys.modules if n.startswith("voicevibe.")]:
+            del sys.modules[name]
+
+    def test_reinitialises(self) -> None:
+        for playing in (None, False):
+            with self.subTest(playing=playing):
+                module, refresh = self.load(playing)
+                self.assertTrue(refresh())
+                self.assertEqual(module.calls, ["terminate", "initialize"])
+
+    def test_never_cuts_off_speech_that_is_playing(self) -> None:
+        module, refresh = self.load(True)
+        self.assertFalse(refresh())
+        self.assertEqual(module.calls, [])
+
+
+class FollowMicrophoneTest(unittest.TestCase):
+    """The app re-chooses before each recording and tells every part of itself."""
+
+    def make(self, pinned: bool = False):  # noqa: ANN201
+        sys.modules["sounddevice"] = fake_sounddevice([("Microphone Array", 2)], 0)
+        for name in [n for n in sys.modules if n.startswith("voicevibe.")]:
+            del sys.modules[name]
+        try:
+            from voicevibe import app
+        except Exception:  # pragma: no cover - numpy / pillow missing
+            self.skipTest("app.py needs numpy and pillow")
+        choices = iter([3, 3, 7])
+        vv = app.VoiceVibe.__new__(app.VoiceVibe)
+        vv.config = types.SimpleNamespace(input_device_pinned=pinned,
+                                          refresh_input_device=lambda: next(choices))
+        vv._mic = 3
+        vv.recorder = types.SimpleNamespace(device=3)
+        vv.session = types.SimpleNamespace(device=3)
+        vv.overlay_devices = []
+        vv.airoot = types.SimpleNamespace(set_device=vv.overlay_devices.append)
+        return vv
+
+    def tearDown(self) -> None:
+        sys.modules.pop("sounddevice", None)
+        for name in [n for n in sys.modules if n.startswith("voicevibe.")]:
+            del sys.modules[name]
+
+    def test_a_new_microphone_reaches_recorders_and_overlay(self) -> None:
+        vv = self.make()
+        vv._choose_microphone()  # still 3: nothing to do
+        self.assertEqual(vv.overlay_devices, [])
+        vv._choose_microphone()  # 3 again
+        vv._choose_microphone()  # Windows now says 7
+        self.assertEqual((vv.recorder.device, vv.session.device, vv._mic), (7, 7, 7))
+        self.assertEqual(vv.overlay_devices, [7])
+
+    def test_a_pinned_device_is_never_changed(self) -> None:
+        vv = self.make(pinned=True)
+        vv._choose_microphone()
+        self.assertEqual(vv.recorder.device, 3)
 
 
 class LoopbackNamingTest(unittest.TestCase):

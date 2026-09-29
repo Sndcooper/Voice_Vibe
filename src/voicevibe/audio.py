@@ -367,12 +367,53 @@ def _input_devices() -> list[tuple[int, dict]]:
         return []
 
 
+def refresh_devices() -> bool:
+    """Re-read the device list and the Windows defaults. ~40 ms.
+
+    PortAudio snapshots both when it starts, so without this a headset
+    plugged in later, or a different mic picked in Windows, is invisible
+    -- and an unplugged one leaves a stale index ("device ID out of
+    range"). Call only when no recording stream is open. Skipped while
+    something is playing through sounddevice (the speak hotkey), since
+    re-initialising would cut it off. Returns whether it refreshed.
+    """
+    try:
+        if sd.get_stream().active:
+            return False
+    except RuntimeError:
+        pass  # nothing has played yet
+    try:
+        sd._terminate()
+        sd._initialize()
+        return True
+    except Exception as exc:
+        log.debug("could not refresh audio devices: %s", exc)
+        return False
+
+
+def device_label(index: int | None) -> str:
+    """ "[2] Microphone Array ..." for an index, or the default input for None."""
+    try:
+        if index is None:
+            index = sd.default.device[0]
+        return f"[{index}] {sd.query_devices(index)['name']}"
+    except Exception:
+        return f"[{index}]"
+
+
+# (default, chosen) pairs already warned about, so re-resolving before every
+# recording does not repeat the same warning each time.
+_warned: set[tuple[object, object]] = set()
+
+
 def default_input_device(priority: list[str] | None = None) -> int | None:
     """The device to record from when config leaves `input_device` empty.
 
-    Normally the Windows default, but never a loopback: recording the speakers
-    produces silence that looks identical to a broken microphone. When the
-    default is one, fall back to a real input instead of failing quietly.
+    The Windows default input whenever it is a real microphone, so choosing a
+    mic in Windows' sound settings (or plugging in a headset that becomes the
+    default) is what Voice Vibe records from. Never a loopback default:
+    recording the speakers produces silence that looks identical to a broken
+    microphone. Only then do `priority` and name-guessing decide.
     """
     devices = _input_devices()
     if not devices:
@@ -382,6 +423,10 @@ def default_input_device(priority: list[str] | None = None) -> int | None:
         default = sd.default.device[0]
     except Exception:
         default = None
+
+    names = dict(devices)
+    if default is not None and default in names and not is_loopback(names[default]["name"]):
+        return None  # the system default is a real mic; let PortAudio use it
 
     # Explicit preferences can include loopback inputs. Match full names first
     # so "Microphone" never accidentally selects "Microphone Array".
@@ -396,8 +441,10 @@ def default_input_device(priority: list[str] | None = None) -> int | None:
                           if wanted in d["name"].casefold() and not _is_alias(d["name"])]
         if candidates:
             chosen, dev = min(candidates, key=lambda entry: (entry[0] != default, entry[0]))
-            log.info("Preferred input [%d] %s.", chosen, dev["name"])
-            if is_loopback(dev["name"]):
+            # Debug: this runs before every recording; the app logs changes.
+            log.debug("Preferred input [%d] %s.", chosen, dev["name"])
+            if is_loopback(dev["name"]) and (default, chosen) not in _warned:
+                _warned.add((default, chosen))
                 # Honoured, since it was asked for by name -- but it is the
                 # usual cause of "it hears nothing and types Thank you."
                 log.warning(
@@ -407,10 +454,6 @@ def default_input_device(priority: list[str] | None = None) -> int | None:
                     "[audio].input_priority.", chosen, dev["name"],
                 )
             return chosen
-
-    names = dict(devices)
-    if default is not None and default in names and not is_loopback(names[default]["name"]):
-        return None  # the system default is fine; let PortAudio use it
 
     usable = [
         (i, d)
@@ -428,7 +471,8 @@ def default_input_device(priority: list[str] | None = None) -> int | None:
         return (0 if looks_like_mic else 1, index)
 
     chosen = min(usable, key=rank)[0]
-    if default is not None and default in names:
+    if default is not None and default in names and (default, chosen) not in _warned:
+        _warned.add((default, chosen))
         log.warning(
             "Default input [%d] %s is a loopback device and records silence, "
             "not speech. Using [%d] %s instead. Set [audio].input_device to "
