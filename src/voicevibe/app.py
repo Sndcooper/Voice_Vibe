@@ -53,6 +53,8 @@ class VoiceVibe:
     _last_toggle = float("-inf")
     TOGGLE_DEBOUNCE = 0.4
     _mic: int | str | None = None
+    # Seconds of the latest audio an interim transcript decodes.
+    PARTIAL_WINDOW = 15.0
     # Small Whisper for short command-like utterances; None = use the main one.
     command_transcriber: Transcriber | None = None
 
@@ -327,8 +329,9 @@ class VoiceVibe:
         self.detector.start()
 
     def _show_question(self, text: str, seconds: float) -> None:
+        # Orb only: Airoot never displays text, and a transcript event would
+        # make it fade out as if the session had finished.
         self.overlay.show(text, seconds=seconds)
-        self.airoot.show_transcript(text, "Confirm")
 
     def _session_tray(self) -> str:
         if not self.session.is_recording:
@@ -413,7 +416,15 @@ class VoiceVibe:
     # ------------------------------------------------------------- partials
     def _partials_enabled(self) -> bool:
         """[continuous].partials: true, false, or "auto" (GPU only -- on a
-        CPU an interim decode competes with the final one for the cores)."""
+        CPU an interim decode competes with the final one for the cores).
+
+        Interim text is shown only on the orb. The Airoot overlay reads any
+        transcript as "finished" and fades out, so sending it interim text
+        made a running dictation look stopped; with the orb off there is
+        nowhere to show it, so none is decoded.
+        """
+        if not getattr(self.overlay, "enabled", False):
+            return False
         setting = str(self.config.continuous.get("partials", "auto")).lower()
         if setting in ("true", "on", "yes", "1"):
             return True
@@ -450,11 +461,15 @@ class VoiceVibe:
         model = self.command_transcriber or self.transcriber
         if model is None:
             return last
-        text = model.transcribe(audio, beam_size=1, wait=False)
+        # Only the latest stretch: re-decoding a whole five-minute take every
+        # 0.8 s grows without bound, and the orb shows one line anyway.
+        window = audio[-int(self.PARTIAL_WINDOW * rate):]
+        text = model.transcribe(window, beam_size=1, wait=False)
         if text is None:  # the model is busy with a final transcript
             return last
         if text and source.still(take):
-            self.airoot.show_transcript(text, "Listening")
+            # Never to Airoot: it treats a transcript as "done" and fades out
+            # while the recording is still running.
             self.overlay.show(text)
         return take, len(audio)
 

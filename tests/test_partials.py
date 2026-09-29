@@ -136,9 +136,10 @@ class TestPartialLoop(unittest.TestCase):
     def make(self, source: FakeSource | None, text="hello there", busy=False, pending=False):  # noqa: ANN001, ANN201
         vv = app.VoiceVibe.__new__(app.VoiceVibe)
         vv.config = SimpleNamespace(audio={"sample_rate": RATE}, continuous={})
-        vv.shown = []
-        vv.airoot = SimpleNamespace(show_transcript=lambda t, label="": vv.shown.append((t, label)))
-        vv.overlay = SimpleNamespace(show=lambda *a, **k: None)
+        vv.shown = []      # interim text on the orb
+        vv.to_airoot = []  # must stay empty: Airoot fades out on any transcript
+        vv.airoot = SimpleNamespace(show_transcript=lambda *a, **k: vv.to_airoot.append(a))
+        vv.overlay = SimpleNamespace(show=lambda text, *a, **k: vv.shown.append(text))
         vv.confirmer = SimpleNamespace(pending=pending)
         model = Mock()
         model.transcribe.return_value = None if busy else text
@@ -150,8 +151,21 @@ class TestPartialLoop(unittest.TestCase):
     def test_shows_interim_text(self) -> None:
         vv = self.make(FakeSource(1.5))
         self.assertEqual(vv._partial_once((0, 0)), (1, int(RATE * 1.5)))
-        self.assertEqual(vv.shown, [("hello there", "Listening")])
+        self.assertEqual(vv.shown, ["hello there"])
         self.assertEqual(vv.transcriber.transcribe.call_args.kwargs, {"beam_size": 1, "wait": False})
+
+    def test_interim_text_never_reaches_airoot(self) -> None:
+        # Airoot treats any transcript as "finished" and fades out: interim
+        # text there made a running dictation look stopped (2026-09-29 bug).
+        vv = self.make(FakeSource(1.5))
+        vv._partial_once((0, 0))
+        self.assertEqual(vv.to_airoot, [])
+
+    def test_only_the_latest_stretch_is_decoded(self) -> None:
+        vv = self.make(FakeSource(240))  # a four-minute take
+        vv._partial_once((0, 0))
+        decoded = vv.transcriber.transcribe.call_args.args[0]
+        self.assertEqual(len(decoded), int(RATE * app.VoiceVibe.PARTIAL_WINDOW))
 
     def test_prefers_the_command_model(self) -> None:
         vv = self.make(FakeSource(1.5))
@@ -159,7 +173,7 @@ class TestPartialLoop(unittest.TestCase):
         vv.command_transcriber.transcribe.return_value = "fast"
         vv._partial_once((0, 0))
         vv.transcriber.transcribe.assert_not_called()
-        self.assertEqual(vv.shown, [("fast", "Listening")])
+        self.assertEqual(vv.shown, ["fast"])
 
     def test_too_short_to_bother(self) -> None:
         vv = self.make(FakeSource(0.5))
@@ -213,6 +227,7 @@ class TestSource(unittest.TestCase):
 
     def test_enabled(self) -> None:
         vv = app.VoiceVibe.__new__(app.VoiceVibe)
+        vv.overlay = SimpleNamespace(enabled=True)
         for setting, device, expected in (
             ("auto", "cuda", True), ("auto", "cpu", False), (True, "cpu", True),
             ("true", "cpu", True), (False, "cuda", False), ("off", "cuda", False),
@@ -221,6 +236,15 @@ class TestSource(unittest.TestCase):
                 vv.config = SimpleNamespace(continuous={"partials": setting})
                 vv.transcriber = SimpleNamespace(device=device)
                 self.assertEqual(vv._partials_enabled(), expected)
+
+    def test_nothing_to_show_on_means_no_partials(self) -> None:
+        # The orb is off in the shipped config (Airoot replaces it), and
+        # Airoot must not get interim text: so no interim decoding at all.
+        vv = app.VoiceVibe.__new__(app.VoiceVibe)
+        vv.overlay = SimpleNamespace(enabled=False)
+        vv.config = SimpleNamespace(continuous={"partials": True})
+        vv.transcriber = SimpleNamespace(device="cuda")
+        self.assertFalse(vv._partials_enabled())
 
 
 if __name__ == "__main__":
