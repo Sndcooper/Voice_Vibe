@@ -9,6 +9,7 @@ Left/right modifier variants collapse to a single token.
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
@@ -79,13 +80,55 @@ class Binding:
     active: bool = field(default=False, init=False)
 
 
-class HotkeyListener:
-    """Tracks held keys and dispatches binding activate/deactivate callbacks."""
+# Virtual-key codes for the tokens normalize_key produces, for physically_down.
+_VK = {
+    "ctrl": (0x11,), "alt": (0x12,), "shift": (0x10,), "cmd": (0x5B, 0x5C),
+    "space": (0x20,), "enter": (0x0D,), "tab": (0x09,), "esc": (0x1B,),
+    "backspace": (0x08,), "delete": (0x2E,), "insert": (0x2D,), "home": (0x24,),
+    "end": (0x23,), "page_up": (0x21,), "page_down": (0x22,), "up": (0x26,),
+    "down": (0x28,), "left": (0x25,), "right": (0x27,),
+    **{f"f{n}": (0x6F + n,) for n in range(1, 25)},
+}
 
-    def __init__(self) -> None:
+
+def physically_down(token: str) -> bool | None:
+    """Whether Windows says `token` is held right now; None if it cannot tell.
+
+    The keyboard hook misses events while an elevated (admin) window has
+    focus -- Windows withholds them from a normal process. A release missed
+    that way leaves the key "held" here forever, and then Space alone
+    completes ctrl+alt+space. The async key state is not withheld.
+    """
+    if sys.platform != "win32":
+        return None
+    if token in _VK:
+        codes = _VK[token]
+    elif len(token) == 1 and token.isalnum():
+        codes = (ord(token.upper()),)
+    else:
+        return None
+    try:
+        import ctypes
+
+        state = ctypes.windll.user32.GetAsyncKeyState
+        return any(state(code) & 0x8000 for code in codes)
+    except Exception:
+        return None
+
+
+class HotkeyListener:
+    """Tracks held keys and dispatches binding activate/deactivate callbacks.
+
+    `check_held(token) -> bool | None` (physically_down in the app) is asked
+    about every other held key on each press; keys it reports up were
+    released unseen and are dropped. None means "cannot tell": kept.
+    """
+
+    def __init__(self, check_held: Callable[[str], bool | None] | None = None) -> None:
         self._bindings: list[Binding] = []
         self._held: set[str] = set()
         self._listener: keyboard.Listener | None = None
+        self._check_held = check_held
 
     def bind(
         self,
@@ -112,6 +155,7 @@ class HotkeyListener:
         token = normalize_key(key)
         if token is None:
             return
+        self._drop_stale(token)
         self._held.add(token)
 
         satisfied = [b for b in self._bindings if b.keys <= self._held]
@@ -130,6 +174,22 @@ class HotkeyListener:
                 continue
             binding.active = True
             self._fire(binding.on_activate)
+
+    def _drop_stale(self, pressed: str) -> None:
+        """Forget held keys that are no longer down (their release was missed)."""
+        if self._check_held is None:
+            return
+        # The key being pressed is excluded: its own state may not be updated
+        # yet while the hook is still processing it.
+        stale = {t for t in self._held if t != pressed and self._check_held(t) is False}
+        if not stale:
+            return
+        log.debug("Keys released while unseen, dropped: %s", ", ".join(sorted(stale)))
+        self._held -= stale
+        for binding in self._bindings:
+            if binding.active and binding.keys & stale:
+                binding.active = False
+                self._fire(binding.on_deactivate)
 
     def _on_release(self, key) -> None:  # noqa: ANN001
         token = normalize_key(key)

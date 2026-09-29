@@ -18,7 +18,7 @@ from .confirm import DEFAULT_NO, DEFAULT_YES, VoiceConfirmer
 from .control import Router
 from .feedback import Beeper, Tray
 from .history import History, data_dir
-from .hotkey import HotkeyListener
+from .hotkey import HotkeyListener, physically_down
 from .inserter import Inserter, focused_window
 from .intent import Responder
 from .launcher import Launcher
@@ -49,6 +49,9 @@ class VoiceVibe:
     # construct one piecemeal) behaves as the plain Whisper path.
     detector: WakeWordDetector | None = None
     _confirm_wake = False
+    # When a tap-to-toggle hotkey last acted; see toggle().
+    _last_toggle = float("-inf")
+    TOGGLE_DEBOUNCE = 0.4
     # Small Whisper for short command-like utterances; None = use the main one.
     command_transcriber: Transcriber | None = None
 
@@ -136,7 +139,9 @@ class VoiceVibe:
         # True while a tap-to-toggle recording is running, so the hold-style
         # binding's release does not cut it short.
         self._latched = False
-        self.hotkeys = HotkeyListener()
+        # Re-checks held keys against Windows, so a release missed in an admin
+        # window cannot leave ctrl+alt "held" for a later lone Space.
+        self.hotkeys = HotkeyListener(check_held=physically_down)
 
         wake = config.wake
         self.wake_enabled = bool(wake.get("enabled", True))
@@ -455,6 +460,15 @@ class VoiceVibe:
             log.warning("A session is open; tap the session key to close it first.")
             self.beeper.error()
             return
+        # One tap, one toggle. A second trigger within a fraction of a second
+        # is never a person tapping again: it stopped a dictation and started
+        # another 56 ms later in practice, which reads as "it turned itself off".
+        now = time.monotonic()
+        if now - self._last_toggle < self.TOGGLE_DEBOUNCE:
+            log.info("Ignored a repeat of the %s hotkey %.0f ms after the last.",
+                     action, (now - self._last_toggle) * 1000)
+            return
+        self._last_toggle = now
         if self.recorder.is_recording:
             self._latched = False
             self._end()

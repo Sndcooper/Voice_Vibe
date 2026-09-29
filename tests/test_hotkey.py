@@ -138,5 +138,83 @@ class TestHoldBindings(unittest.TestCase):
         self.assertIsNone(listener.bind("", on_activate=lambda: None))
 
 
+class TestMissedReleases(unittest.TestCase):
+    """An admin window hides key events from the hook; Windows' own key state
+    is the tie-breaker, so a missed release cannot leave keys stuck held."""
+
+    def setUp(self) -> None:
+        self.down: set[str] = set()  # what Windows says is physically held
+        self.fired: list[str] = []
+        self.released: list[str] = []
+        self.listener = HotkeyListener(check_held=lambda t: t in self.down)
+        self.listener.bind("ctrl+alt+space", on_activate=lambda: self.fired.append("dictate"))
+        self.listener.bind("ctrl+alt+d", on_activate=lambda: self.fired.append("hold"),
+                           on_deactivate=lambda: self.released.append("hold"))
+
+    def press(self, name: str) -> None:
+        self.down.add(name)
+        self.listener._on_press(FakeKey(name))  # noqa: SLF001
+
+    def test_normal_chord_fires(self) -> None:
+        self.press("ctrl")
+        self.press("alt")
+        self.press("space")
+        self.assertEqual(self.fired, ["dictate"])
+
+    def test_lone_space_after_a_missed_release_does_not_fire(self) -> None:
+        self.press("ctrl")
+        self.press("alt")
+        self.down.clear()  # released inside an admin window: no events seen
+        self.press("space")
+        self.assertEqual(self.fired, [])
+
+    def test_a_missed_release_ends_a_hold(self) -> None:
+        self.press("ctrl")
+        self.press("alt")
+        self.press("d")
+        self.down.clear()
+        self.press("x")
+        self.assertEqual(self.released, ["hold"])
+
+    def test_unknown_state_keeps_the_key(self) -> None:
+        listener = HotkeyListener(check_held=lambda t: None)
+        fired: list[str] = []
+        listener.bind("ctrl+alt+space", on_activate=lambda: fired.append("dictate"))
+        for name in ("ctrl", "alt", "space"):
+            listener._on_press(FakeKey(name))  # noqa: SLF001
+        self.assertEqual(fired, ["dictate"])
+
+
+class TestToggleDebounce(unittest.TestCase):
+    def make(self):  # noqa: ANN201
+        try:
+            from voicevibe import app
+        except Exception:  # pragma: no cover - bare checkout without numpy etc.
+            self.skipTest("app.py needs numpy, sounddevice and pillow")
+        from types import SimpleNamespace
+
+        vv = app.VoiceVibe.__new__(app.VoiceVibe)
+        vv.session = SimpleNamespace(is_recording=False)
+        vv.recorder = SimpleNamespace(is_recording=False)
+        vv.calls = []
+        vv._begin = lambda action: (vv.calls.append("begin"),
+                                    setattr(vv.recorder, "is_recording", True))
+        vv._end = lambda: (vv.calls.append("end"), setattr(vv.recorder, "is_recording", False))
+        return vv
+
+    def test_a_double_trigger_is_one_toggle(self) -> None:
+        vv = self.make()
+        vv.toggle("insert")
+        vv.toggle("insert")  # 0 ms later: the same tap seen twice
+        self.assertEqual(vv.calls, ["begin"])
+
+    def test_separate_taps_still_toggle(self) -> None:
+        vv = self.make()
+        vv.toggle("insert")
+        vv._last_toggle -= 1.0  # a second later
+        vv.toggle("insert")
+        self.assertEqual(vv.calls, ["begin", "end"])
+
+
 if __name__ == "__main__":
     unittest.main()
