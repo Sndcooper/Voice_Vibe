@@ -70,6 +70,15 @@ reports = [
     "apscheduler==3.11.0",
     "jinja2==3.1.6",
 ]
+# WS3: browser / social / research / notes skills. OpenCLI is Node (venvs\node).
+# Agent-Reach is installed from Repos\Agent-Reach @a19a171 (`uv pip install
+# ..\Repos\Agent-Reach`); PyPI's "agent-reach" is an older, different 0.1.0.
+# Every WS3 skill degrades to a spoken message without these.
+web = [
+    "trafilatura==2.2.0",
+    "notion-client==3.1.0",
+    "mcp==2.2.0",
+]
 
 [project.scripts]
 voicevibe = "voicevibe.__main__:main"
