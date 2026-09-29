@@ -151,7 +151,7 @@ class Transcriber:
 
         name = str(model_cfg.get("name", "auto")).lower()
         if name == "auto":
-            tier = recommend_tier()
+            tier = recommend_tier() if self.device == "cuda" else recommend_tier_for_cpu()
             name = tier.model
             log.info("Model auto-selected: %s (%s).", name, tier.note)
         self.model_name = MODEL_ALIASES.get(name, name)
@@ -182,7 +182,7 @@ class Transcriber:
                 raise
             # A GPU-sized model on a CPU that was never meant to run it takes
             # many seconds per sentence, so drop to what this machine can serve.
-            fallback = recommend_tier()
+            fallback = recommend_tier_for_cpu()
             log.warning(
                 "GPU load failed (%s). Falling back to %s on CPU.", exc, fallback.model
             )
@@ -192,7 +192,8 @@ class Transcriber:
                 self.model_name,
                 device="cpu",
                 compute_type=self.compute_type,
-                cpu_threads=workers,
+                cpu_threads=int(model_cfg.get("cpu_threads", 0) or 0)
+                or max(1, (os.cpu_count() or 2) - 1),
             )
         log.info("Model ready in %.1fs", time.perf_counter() - started)
 

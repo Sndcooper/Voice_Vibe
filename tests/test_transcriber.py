@@ -3,12 +3,38 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from voicevibe.transcriber import Transcriber
+from voicevibe import transcriber as module
+
+
+class TestCPUSelection(unittest.TestCase):
+    def test_explicit_cpu_ignores_visible_gpu(self):
+        whisper = Mock()
+        with patch.dict(sys.modules, {"faster_whisper": SimpleNamespace(WhisperModel=whisper)}), \
+                patch.object(module, "register_cuda_dlls"), \
+                patch.object(module, "cuda_available", return_value=True), \
+                patch.object(module, "recommend_tier_for_cpu",
+                             return_value=module.Tier("tiny.en", "int8", "test")):
+            model = Transcriber({"device": "cpu"})
+        self.assertEqual(model.model_name, "tiny.en")
+        self.assertEqual(model.compute_type, "int8")
+
+    def test_gpu_load_failure_uses_cpu_model_and_precision(self):
+        whisper = Mock(side_effect=[RuntimeError("GPU load failed"), Mock()])
+        with patch.dict(sys.modules, {"faster_whisper": SimpleNamespace(WhisperModel=whisper)}), \
+                patch.object(module, "register_cuda_dlls"), \
+                patch.object(module, "cuda_available", return_value=True), \
+                patch.object(module, "recommend_tier_for_cpu",
+                             return_value=module.Tier("tiny.en", "int8", "test")):
+            model = Transcriber({"device": "cuda", "cpu_threads": 2})
+        self.assertEqual((model.model_name, model.device, model.compute_type),
+                         ("tiny.en", "cpu", "int8"))
+        self.assertEqual(whisper.call_args.kwargs["cpu_threads"], 2)
 
 
 class TestRawTranscription(unittest.TestCase):
