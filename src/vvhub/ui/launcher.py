@@ -207,10 +207,35 @@ def set_autostart(enabled: bool, reg: Any = None) -> None:
                 pass
 
 
-def main(argv: list[str] | None = None, *, reg: Any = None, out: Callable[[str], None] = print) -> int:
+SECRET_ALIASES = {"freellmapi": "freellmapi_key", "notion": "notion_token", "telegram": "telegram_bot_token"}
+
+
+def set_secret(alias: str, *, ask: Callable[[str], str] = input, out: Callable[[str], None] = print) -> int:
+    """Paste a key at a visible prompt -> keyring (hidden prompts often drop Ctrl+V)."""
+    from .. import secrets
+    from .services import check_secret
+
+    name = SECRET_ALIASES.get(alias, alias)
+    if name not in SECRET_ALIASES.values():
+        out(f"Unknown key. Use one of: {', '.join(SECRET_ALIASES)}")
+        return 2
+    value = (ask(f"Paste the {alias} key and press Enter: ") or "").strip()
+    problem = check_secret(name, value)
+    if problem:
+        out(f"Not saved. {problem}")
+        return 1
+    secrets.set(name, value)
+    out(f"{alias} key saved to Windows Credential Manager ({len(value)} characters).")
+    return 0
+
+
+def main(argv: list[str] | None = None, *, reg: Any = None, out: Callable[[str], None] = print,
+         ask: Callable[[str], str] = input) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["start"]:  # everything after "start" belongs to Voice Vibe, dashes included
         return start(argv[1:], out=out)
+    if argv[:1] == ["set-secret"]:
+        return set_secret(argv[1] if len(argv) > 1 else "", ask=ask, out=out)
     parser = argparse.ArgumentParser(prog="python -m vvhub.ui.launcher")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("start", help="hub (if down) then Voice Vibe, both detached; later args go to Voice Vibe")

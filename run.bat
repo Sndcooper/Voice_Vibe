@@ -30,6 +30,8 @@ REM Login autostart, off unless asked: run.bat --autostart on, off or status
 if /I "%~1"=="--autostart" goto :autostart
 REM The control panel window (also in the tray menu): run.bat --ui
 if /I "%~1"=="--ui" goto :ui
+REM Save a key to Windows Credential Manager: run.bat --set-key freellmapi (or notion, telegram)
+if /I "%~1"=="--set-key" goto :setkey
 
 REM `shift` does not rewrite %*, so strip the flag from the string instead.
 if /I not "%~1"=="--console" goto :check_diagnostic
@@ -66,3 +68,7 @@ exit /b %errorlevel%
 :ui
 start "" "%PYW%" -m vvhub.ui
 exit /b 0
+
+:setkey
+"%PY%" -m vvhub.ui.launcher set-secret %2
+exit /b %errorlevel%

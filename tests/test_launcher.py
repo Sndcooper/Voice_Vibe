@@ -253,6 +253,35 @@ class AutostartTests(unittest.TestCase):
         self.assertTrue(launcher.autostart_enabled(reg=reg))
 
 
+class SetSecretTests(unittest.TestCase):
+    def test_saves_valid_key_without_echoing_it(self):
+        from vvhub import secrets
+
+        vault = {}
+        secrets.use_backend(vault)
+        try:
+            out = []
+            key = "freellmapi-" + "a1b2c3" * 6
+            rc = launcher.main(["set-secret", "freellmapi"], out=out.append, ask=lambda prompt: f"  {key}  ")
+            self.assertEqual(rc, 0)
+            self.assertEqual(vault["freellmapi_key"], key)
+            self.assertIn("saved", out[-1])
+            self.assertNotIn(key, " ".join(out))
+            rc = launcher.main(["set-secret", "freellmapi"], out=out.append, ask=lambda prompt: "has spaces in it")
+            self.assertEqual(rc, 1)
+            self.assertEqual(vault["freellmapi_key"], key)
+            rc = launcher.main(["set-secret", "telegram"], out=out.append, ask=lambda prompt: "")
+            self.assertEqual(rc, 1)
+            self.assertNotIn("telegram_bot_token", vault)
+        finally:
+            secrets.use_backend(None)
+
+    def test_unknown_name(self):
+        out = []
+        self.assertEqual(launcher.main(["set-secret", "hub"], out=out.append, ask=lambda p: "x"), 2)
+        self.assertIn("freellmapi", out[-1])
+
+
 class RunBatTests(unittest.TestCase):
     """run.bat can't be executed in a unit test; check it calls the launcher."""
 
@@ -268,6 +297,10 @@ class RunBatTests(unittest.TestCase):
 
     def test_autostart_flag(self):
         self.assertIn("--autostart", self.bat)
+
+    def test_set_key_flag(self):
+        self.assertIn("--set-key", self.bat)
+        self.assertIn("-m vvhub.ui.launcher set-secret", self.bat)
 
 
 if __name__ == "__main__":
