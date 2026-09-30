@@ -69,13 +69,14 @@ def section_for(kind: str) -> str | None:
     k = (kind or "").lower()
     if "commit" in k:
         return None
-    if k.endswith("_repo"):
+    last = k.rsplit("_", 1)[-1]  # "github_pr" -> "pr"; WS3 writes bare "post" / "comment"
+    if last == "repo":
         return "repos"
-    if k.endswith("_pr") or k.endswith("_pull_request"):
+    if last == "pr" or k.endswith("pull_request"):
         return "prs"
-    if k.endswith(("_comment", "_mention", "_reply", "_review")):
+    if last in ("comment", "mention", "reply", "review"):
         return "comments"
-    if k.endswith("_post"):
+    if last == "post":
         return "posts"
     if k.startswith("research"):
         return "research"
@@ -321,6 +322,10 @@ async def _to_notion(hub: Any, report: Report) -> str:
         if hasattr(notes, "save_report"):
             url = await notes.save_report(report.title, markdown)
             return str(url or "saved")
+        notion = getattr(notes, "notion", None)  # WS3: NotionNotes.add_to_section -> {id, url}
+        if notion is not None and hasattr(notion, "add_to_section"):
+            page = await notion.add_to_section("Reports", report.title, markdown)
+            return str((page or {}).get("url") or "saved")
         if "save_report" in getattr(notes, "actions", {}):
             plan = Plan(skill="notes", action="save_report", args={"title": report.title, "markdown": markdown},
                         preview=f"Save {report.title} to Notion")

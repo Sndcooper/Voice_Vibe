@@ -215,6 +215,32 @@ class DeliverTests(unittest.TestCase):
         self.assertEqual(rep.delivery["notion"], "notes skill not available")
         self.assertEqual(rep.delivery["telegram"], "bot not connected")
 
+    def test_ws3_notes_add_to_section(self):
+        class Notion:
+            def __init__(self):
+                self.calls = []
+
+            async def add_to_section(self, section, title, markdown):
+                self.calls.append((section, title, markdown))
+                return {"id": "p1", "url": "https://notion.so/p1"}
+
+        notes = SimpleNamespace(name="notes", notion=Notion(), actions={})
+        rep = run(reports.make_report(self.hub(notes=notes), slot=SLOT, since=SINCE.timestamp(),
+                                      now=SLOT.timestamp(), out_dir=self.dir))
+        self.assertEqual(rep.delivery["notion"], "https://notion.so/p1")
+        section, title, md = notes.notion.calls[0]
+        self.assertEqual((section, title), ("Reports", rep.title))
+        self.assertIn("## Pull requests", md)
+
+    def test_ws3_bare_kinds_are_reported(self):
+        s = Store(":memory:")
+        s.add_watch_item("linkedin", "post", "l1", "Posted: hello", "https://linkedin.com/p", {}, ts=T)
+        s.add_watch_item("instagram", "comment", "i1", "@amy: nice", "https://instagram.com/p", {}, ts=T)
+        s.add_watch_item("research", "research", "r1", "Laya ONNX", "https://notion.so/r", {}, ts=T)
+        rep = reports.collect(s, SINCE.timestamp(), SLOT.timestamp(), slot=SLOT)
+        self.assertEqual({k: len(v) for k, v in rep.sections.items()},
+                         {"posts": 1, "comments": 1, "research": 1})
+
     def test_notes_skill_without_save_report_uses_run(self):
         from vvhub.schemas import Result
 
