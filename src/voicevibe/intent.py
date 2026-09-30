@@ -33,6 +33,10 @@ _LAUNCH = re.compile(
     re.IGNORECASE,
 )
 
+# "open terminal and run the tests" / "open notepad, then type hello": the app
+# name, then the rest of the request.
+_THEN = re.compile(r"\s*(?:,\s*)?\b(?:and then|and|then)\b\s*|\s*,\s+", re.IGNORECASE)
+
 # Nouns that make "open X" an editing instruction rather than an app launch.
 # Only consulted when the allowlist has already failed to resolve the name, so
 # a real app called "File Explorer" is still launched normally.
@@ -78,11 +82,23 @@ class Reply:
     text: str = ""  # text to insert, for the dictate path
     speak: str = ""  # spoken back to the user
     caption: str = ""  # shown beside the orb
+    # "open terminal and run the tests": what comes after the launch, handled
+    # by the app once the new window is in front.
+    follow: str = ""
 
     @property
     def handled(self) -> bool:
         """True when this was something other than plain dictation."""
         return self.action != DICTATE
+
+
+def _split_then(target: str) -> tuple[str, str, str]:
+    """("terminal", "and", "start the tests") for "terminal and start the tests"."""
+    match = _THEN.search(target)
+    if not match or match.start() == 0:
+        return target, "", ""
+    return (target[:match.start()].strip(), match.group(0).strip(),
+            target[match.end():].strip(" ,."))
 
 
 def _sentences(text: str, limit: int = 2, max_chars: int = 240) -> str:
@@ -174,6 +190,14 @@ class Responder:
             return None
 
         entry = self.launcher.resolve(target)
+        follow = ""
+        if entry is None:
+            # "terminal and start the tests": the app name comes first.
+            first, _, rest = _split_then(target)
+            if rest:
+                head = self.launcher.resolve(first) if first else None
+                if head is not None:
+                    entry, follow = head, rest
         if entry is None:
             if set(target.lower().split()) & _NOT_AN_APP:
                 return None
@@ -186,7 +210,8 @@ class Responder:
             f"Opening {entry.name}." if started else f"I couldn't start {entry.name}."
         )
         return Reply(
-            action=LAUNCH if started else CONTROL, speak=message, caption=message
+            action=LAUNCH if started else CONTROL, speak=message, caption=message,
+            follow=follow if started else "",
         )
 
     def _answer_screen(self, kind: str) -> Reply:

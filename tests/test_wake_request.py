@@ -41,7 +41,9 @@ class ImplicitRequestTests(unittest.TestCase):
         vv.router = Router({"enabled": True}, executor=vv.executor, finder=Mock(), profiles={})
         vv.router._front = lambda: 1
         launcher = Mock()
-        launcher.resolve.return_value = SimpleNamespace(name="Terminal")
+        # Like the real allowlist: only an app name resolves, not a sentence.
+        launcher.resolve.side_effect = lambda name: (
+            SimpleNamespace(name="Terminal") if name.lower().strip() == "terminal" else None)
         launcher.launch.return_value = True
         vv.responder = Responder(launcher=launcher,
             screen=SimpleNamespace(read=lambda **kwargs: ScreenContext(title="Test")))
@@ -49,10 +51,21 @@ class ImplicitRequestTests(unittest.TestCase):
         vv.history, vv.overlay, vv.airoot, vv.beeper, vv.voice = (Mock() for _ in range(5))
         vv._set_wake_bias = Mock()
         vv._indicate = Mock()
+        vv._session_tray = lambda: "armed"
+        vv.LAUNCH_SETTLE_SECONDS = 0.0
+        vv.LAUNCH_FOCUS_SECONDS = 0.3
         return vv
 
-    def said(self, vv, *utterances: str) -> None:  # noqa: ANN001
-        with patch.object(app, "focused_window", return_value="Test"):
+    def said(self, vv, *utterances: str, windows=(1, 2)) -> None:  # noqa: ANN001
+        """`windows`: foreground hwnds; the first is before the launch, the
+        last repeats (a changed hwnd = the launched app came to the front)."""
+        seq = list(windows)
+
+        def front() -> int:
+            return seq.pop(0) if len(seq) > 1 else seq[0]
+
+        with patch.object(app, "focused_window", return_value="Test"), \
+                patch.object(app, "foreground", side_effect=front):
             for text in utterances:
                 vv._do_session(text, 0.1)
 
@@ -88,19 +101,58 @@ class ImplicitRequestTests(unittest.TestCase):
         vv.responder.launcher.launch.assert_not_called()
         self.assertIn("Draft the meeting notes for Tuesday", self.typed(vv))
 
-    def test_window_expires(self) -> None:
+    def test_rearm_cancels_the_pending_request(self) -> None:
         vv = self.make()
         self.said(vv, "Hey computer.")
-        vv._command_until = time.monotonic() - 1
-        self.said(vv, "Open terminal.")
+        vv._arm("silent for 20s")
+        self.said(vv, "Open terminal.")  # armed again: ignored, not typed
         vv.responder.launcher.launch.assert_not_called()
-        self.assertIn("Open terminal", self.typed(vv))
+        self.assertEqual(self.typed(vv), "")
+
+    def test_no_time_limit_while_awake(self) -> None:
+        # 2026-09-30 17:57: a long request ending 15 s after the wake was typed.
+        vv = self.make()
+        self.said(vv, "Hey computer.")
+        vv._last_activity -= 60  # time passing does not matter, only re-arming
+        self.said(vv, "Open terminal.")
+        vv.responder.launcher.launch.assert_called_once()
+
+    def test_open_then_type(self) -> None:
+        vv = self.make()
+        self.said(vv, "Hey computer, open terminal and type git status.")
+        vv.responder.launcher.launch.assert_called_once()
+        self.assertEqual(self.typed(vv).strip().lower(), "git status.")
+
+    def test_open_then_unhandled_rest_is_typed_in_the_new_window(self) -> None:
+        vv = self.make()
+        self.said(vv, "Hey computer.", "Open terminal and then start the tests.")
+        vv.responder.launcher.launch.assert_called_once()  # never "an app called the tests"
+        self.assertIn("start the tests", self.typed(vv).lower())
+        self.assertNotIn("don't know", str(vv.voice.say.call_args_list))
+
+    def test_rest_is_dropped_if_the_window_never_comes_up(self) -> None:
+        vv = self.make()
+        self.said(vv, "Hey computer, open terminal and type secret notes.", windows=(1,))
+        vv.responder.launcher.launch.assert_called_once()
+        self.assertEqual(self.typed(vv), "")
+        self.assertIn("didn't come to the front", str(vv.voice.say.call_args_list))
 
     def test_armed_speech_is_still_ignored(self) -> None:
         vv = self.make()
         self.said(vv, "Open terminal.")
         vv.responder.launcher.launch.assert_not_called()
         self.assertEqual(self.typed(vv), "")
+
+
+class SplitThenTests(unittest.TestCase):
+    def test_split(self) -> None:
+        from voicevibe.intent import _split_then
+
+        self.assertEqual(_split_then("terminal and start the tests")[::2],
+                         ("terminal", "start the tests"))
+        self.assertEqual(_split_then("notepad, then type hello.")[::2], ("notepad", "type hello"))
+        self.assertEqual(_split_then("terminal and then run it")[::2], ("terminal", "run it"))
+        self.assertEqual(_split_then("blender")[::2], ("blender", ""))
 
 
 if __name__ == "__main__":

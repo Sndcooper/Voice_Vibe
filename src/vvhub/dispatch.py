@@ -68,13 +68,18 @@ async def _decide_and_run(hub: Any, text: str, context: dict, conversation: str 
     else:
         router = _optional("smart_router")
         if router is None:
+            log.info("Not handled (no smart router): %r", text[:120])
             return NOT_HANDLED
         decision = await router.decide(hub, text, context)
         if decision is None:
+            log.info("Not a hub task: %r", text[:120])
             return NOT_HANDLED
         skill = _skill_for(hub.skills, decision)
         if skill is None:
+            log.info("No skill for %s/%s: %r", decision.category, decision.action, text[:120])
             return NOT_HANDLED
+    log.info("%r -> %s.%s target=%r confidence=%.2f (%s)", text[:120], skill.name,
+             decision.action, decision.target, decision.confidence, decision.reason[:80])
 
     hub.store.add_decision(text, decision.to_dict(), conversation)
     plan: Plan = await skill.plan(decision, context)
@@ -94,13 +99,17 @@ async def _decide_and_run(hub: Any, text: str, context: dict, conversation: str 
             return Result(ok=False, text="That needs your approval, and approvals are not set up yet.")
         approval = await approvals.request(hub, plan, conversation=conversation)
         if getattr(approval, "status", None) != "approved":
+            log.info("%s.%s not approved (%s)", skill.name, plan.action,
+                     getattr(approval, "status", None))
             return Result(ok=False, text="Cancelled.")
 
     try:
-        return await skill.run(plan, approval=approval)
+        result = await skill.run(plan, approval=approval)
     except Exception as exc:  # noqa: BLE001 - a skill bug must not kill the hub
         log.exception("Skill %s failed on %s", skill.name, plan.action)
         return Result(ok=False, text=f"{skill.name} failed: {exc}")
+    log.info("%s.%s -> ok=%s %r", skill.name, plan.action, result.ok, result.text[:120])
+    return result
 
 
 def _skill_for(skills: dict, decision: Decision) -> Any:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import queue
+import re
 import sys
 import threading
 import time
@@ -33,7 +34,7 @@ from .speaker import Speaker, SpeechUnavailable, SystemVoice
 from .transcriber import Transcriber, choose_command_model
 from .uia import Finder
 from .vocab import Vocabulary, echoes_prompt
-from .winctl import front_process
+from .winctl import foreground, front_process
 from .wake import PhraseMatcher
 from .wakeword import WakeWordDetector, phrase_for
 
@@ -46,6 +47,9 @@ SESSION = "session"
 # Session sub-states when a wake phrase is configured.
 ARMED = "armed"  # listening, but only for the wake phrase
 DICTATING = "dictating"  # wake phrase heard, everything now goes to the cursor
+
+# "open notepad and type hello": after a launch, "type <text>" types the text.
+_TYPE_REQUEST = re.compile(r"^(?:please\s+)?type\s+(.+)$", re.IGNORECASE)
 
 
 class VoiceVibe:
@@ -66,9 +70,12 @@ class VoiceVibe:
     # Link to vvhub (hub_client.py); None = hub features off, dictation as before.
     hub: HubClient | None = None
     # After "hey computer", the next utterance is a request even without the
-    # "computer" prefix, if it comes within this many seconds.
-    IMPLICIT_COMMAND_SECONDS = 10.0
-    _command_until = 0.0
+    # "computer" prefix; re-arming cancels it.
+    _command_pending = False
+    # "open terminal and <rest>": how long to wait for the app to come to the
+    # front before <rest> is handled (never typed into the old window).
+    LAUNCH_FOCUS_SECONDS = 6.0
+    LAUNCH_SETTLE_SECONDS = 1.0
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -434,6 +441,7 @@ class VoiceVibe:
             return
         self._wake_state = ARMED
         self._confirm_wake = False
+        self._command_pending = False
         if self.detector is not None:
             self.detector.reset()
         self._set_wake_bias(True)
@@ -690,7 +698,7 @@ class VoiceVibe:
             self.beeper.wake()
             self._indicate("session")
             log.info("Awake. The next request needs no \"computer\"; after it, speech is typed.")
-            self._command_until = time.monotonic() + self.IMPLICIT_COMMAND_SECONDS
+            self._command_pending = True
             # The wake phrase usually arrives in the same breath as the request,
             # so keep going with whatever followed it.
             text = remainder
@@ -704,7 +712,7 @@ class VoiceVibe:
             self._confirm_wake = False
             woke, remainder = self.wake_matcher.split(text)
             if woke:
-                self._command_until = time.monotonic() + self.IMPLICIT_COMMAND_SECONDS
+                self._command_pending = True
                 text = remainder
                 if not text.strip():
                     return
@@ -725,18 +733,21 @@ class VoiceVibe:
             self._arm("submitted")
 
     def _take_implicit(self) -> bool:
-        """True once: for the rest of the wake utterance, or the first
-        utterance within IMPLICIT_COMMAND_SECONDS of it. "Hey computer" then
-        "open terminal" is a request, as with any voice assistant."""
-        until, self._command_until = self._command_until, 0.0
-        return until > 0 and time.monotonic() <= until
+        """True once: for the rest of the wake utterance, or the next
+        utterance after it, however long it takes to say. "Hey computer" then
+        "open terminal" is a request, as with any voice assistant. Re-arming
+        (the silence timeout, a sleep phrase) cancels it."""
+        pending, self._command_pending = self._command_pending, False
+        return pending
 
-    def _do_command_or_insert(self, text: str, elapsed: float, implicit: bool = False) -> None:
+    def _do_command_or_insert(self, text: str, elapsed: float, implicit: bool = False,
+                              assistant: bool = True) -> None:
         """Offer a prefixed utterance to the router; type everything else.
 
         An unhandled command is typed exactly as heard, prefix included, so
         [control] never loses words the user meant as dictation. `implicit`
-        (just after the wake phrase) makes the "computer" prefix optional.
+        (just after the wake phrase) makes the "computer" prefix optional;
+        `assistant=False` skips app launching and spoken edits (follow-ups).
         """
         command = self.router.split(text)
         if command is None and implicit and getattr(self.router, "enabled", False) and text.strip():
@@ -773,7 +784,7 @@ class VoiceVibe:
                 self.beeper.done()
                 return
             log.debug("Command not handled, dictating instead: %s", command.strip())
-            if self._do_session_extra(command, text, elapsed):
+            if assistant and self._do_session_extra(command, text, elapsed):
                 return
             if self._do_hub(command, text, elapsed):
                 return
@@ -933,6 +944,7 @@ class VoiceVibe:
                 return True
             self._do_edit(edit[0], edit[1], heard, elapsed)
             return True
+        before = foreground()
         reply = self.responder.respond(command)
         if not reply.handled:
             return False
@@ -946,7 +958,39 @@ class VoiceVibe:
         if reply.speak:
             self.voice.say(reply.speak)
         self.beeper.done()
+        if reply.follow:
+            self._do_follow(before, reply.follow, elapsed)
         return True
+
+    def _do_follow(self, before: int | None, rest: str, elapsed: float) -> None:
+        """The rest of "open terminal and <rest>", done in the app just opened.
+
+        Waits for a new window in front first: otherwise the rest would land
+        in whatever you were in before (a chat box, a document), so it is
+        dropped with a spoken note. Then "type <text>" types the text; anything
+        else goes to the router and the hub, and is typed if neither takes it.
+        The launcher is not asked again, so "run the tests" never becomes
+        "I don't know an app called the tests".
+        """
+        if not self._wait_for_new_window(before):
+            log.info("The new window did not come to the front; not doing: %s", rest)
+            self.voice.say("It didn't come to the front, so I stopped there.")
+            return
+        time.sleep(self.LAUNCH_SETTLE_SECONDS)
+        typed = _TYPE_REQUEST.match(rest)
+        if typed:
+            self._do_insert(typed.group(1), elapsed, session=True)
+            return
+        self._do_command_or_insert(rest, elapsed, implicit=True, assistant=False)
+
+    def _wait_for_new_window(self, before: int | None) -> bool:
+        deadline = time.monotonic() + self.LAUNCH_FOCUS_SECONDS
+        while time.monotonic() < deadline:
+            now = foreground()
+            if now and now != before:
+                return True
+            time.sleep(0.1)
+        return False
 
     def _do_insert(self, text: str, elapsed: float, *, session: bool = False) -> None:
         target = focused_window() or "unknown window"
