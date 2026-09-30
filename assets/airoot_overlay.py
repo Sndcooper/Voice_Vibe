@@ -44,9 +44,15 @@ SPRITESHEET = BASE / "airoot-spritesheet.png"
 # The original mark, shown while nobody talks: a 600x417 cell like the
 # spritesheet's, with the mark in the same box as frame 0.
 LOGO = BASE / "airoot-logo.png"
-# The dance frame shown, still, while nobody talks: waves in the glowing
-# pink-red, same size as the flat logo it replaces (user, 2026-09-30).
+# The dance frame shown when the overlay first appears (user, 2026-09-30).
 IDLE_FRAME = 0
+# Silence is never a still picture: the same wave frames keep playing slowly
+# and the logo floats a few pixels around its spot, without growing. Talking
+# speeds the same animation up to DANCE_SPEED, so there is no jump between them.
+IDLE_SPEED = 9          # frames per second in silence (a full loop ~6.7 s)
+IDLE_FLOAT_X = 1.5      # pixels of sideways drift
+IDLE_FLOAT_Y = 2.5      # pixels of up/down float
+IDLE_FLOAT_PERIOD = 3.2  # seconds per float cycle
 ICON = BASE / "airoot-icon.ico"
 
 
@@ -284,16 +290,20 @@ class ListeningOverlay(QWidget):
     def logo_scale(self) -> float:
         return 1.0 + GROWTH * math.sqrt(max(0.0, self.level))
 
+    def logo_offset(self) -> tuple[float, float]:
+        return 0.0, 0.0
+
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         frame = self.current_logo()
         scale = self.logo_scale()
+        dx, dy = self.logo_offset()
         width, height = LOGO_WIDTH * scale, LOGO_HEIGHT * scale
         # Grow about the centre so the logo does not drift as it reacts.
         bounds = QRectF(
-            (self.width() - width) / 2,
-            LOGO_TOP - (height - LOGO_HEIGHT) / 2,
+            (self.width() - width) / 2 + dx,
+            LOGO_TOP - (height - LOGO_HEIGHT) / 2 + dy,
             width,
             height,
         )
@@ -338,13 +348,16 @@ class AirootOverlay(ListeningOverlay):
         self.pending = "hide"
         self.dismiss_shape = 1.0
         self.last_tick = time.monotonic()
-        self.dance_phase = 0.0
+        self.dance_phase = float(IDLE_FRAME)
+        self.float_phase = 0.0
+        self.drawn_offset = (0.0, 0.0)
         self.morph_scale = 1.0
-        # Silence shows the first wave frame (the glowing pink-red mark), still
-        # and at rest size; talking dances on from that same picture. The flat
-        # red airoot-logo.png is only a fallback if the frames can't be used.
+        self.morph_offset = (0.0, 0.0)
+        # The flat red mark is kept only as a fallback picture; what shows is
+        # always the wave frames, slow in silence and fast while talking.
         logo = load_static_logo(LOGO_WIDTH, LOGO_HEIGHT)
         self.static_logo = self.frames[IDLE_FRAME] if self.frames else logo
+        self.frame_index = IDLE_FRAME
         self.talking = False
         self.quiet_since = None
         # 0 = static logo, 1 = dance; eased when drawn.
@@ -354,11 +367,13 @@ class AirootOverlay(ListeningOverlay):
         self.commands_timer.setInterval(30)
 
     def rest(self):
-        """Back to the still logo; the next voice starts the dance afresh."""
+        """Back to the idle waves; the float starts again from its centre."""
         self.talking = False
         self.quiet_since = None
         self.talk_mix = 0.0
         self.level = 0.0
+        self.float_phase = 0.0
+        self.drawn_offset = (0.0, 0.0)
 
     def show_listening(self):
         if self.mode == "dismiss" or self.completed:
@@ -386,6 +401,8 @@ class AirootOverlay(ListeningOverlay):
         # a crossfade between them, at its current size.
         self.morph_scale = self.logo_scale()
         self.morph_mix = self.logo_mix()
+        # ...and at its current place in the idle float.
+        self.morph_offset = self.logo_offset()
         self.stop_microphone()
         self.mode = "gather"
         self.entered = time.monotonic()
@@ -473,11 +490,9 @@ class AirootOverlay(ListeningOverlay):
             self.update()
 
     def follow_voice(self, now, dt):
-        """Static logo in silence, dance while talking. True if the look changed."""
+        """Slow waves and a gentle float in silence, the dance while talking.
+        True if the picture changed."""
         if self.level >= TALK_ON:
-            if not self.talking and self.talk_mix == 0:
-                # Start from frame 0, which sits in the same box as the logo.
-                self.dance_phase = 0.0
             self.talking = True
             self.quiet_since = None
         elif self.talking:
@@ -489,48 +504,43 @@ class AirootOverlay(ListeningOverlay):
             elif now - self.quiet_since >= QUIET_HOLD:
                 self.talking = False
                 self.quiet_since = None
-        before = self.talk_mix
         step = dt / TALK_FADE
-        self.talk_mix = min(1.0, before + step) if self.talking else max(0.0, before - step)
-        if self.talk_mix == 0:
-            # One last repaint lands on the static logo; then none until speech.
-            return before != 0
-        # A steady pace: the voice only nudges the speed, so it never crawls.
-        self.dance_phase += dt * DANCE_SPEED * (0.6 + 0.4 * math.sqrt(max(0.0, self.level)))
+        self.talk_mix = min(1.0, self.talk_mix + step) if self.talking else max(0.0, self.talk_mix - step)
+        mix = self.logo_mix()
+        # One phase for both looks, so speeding up never jumps frames. In the
+        # dance the voice only nudges the speed, so it never crawls.
+        dance = DANCE_SPEED * (0.6 + 0.4 * math.sqrt(max(0.0, self.level)))
+        self.dance_phase += dt * (IDLE_SPEED + (dance - IDLE_SPEED) * mix)
+        self.float_phase += dt
+        before = (self.frame_index, self.drawn_offset)
         self.frame_index = int(self.dance_phase) % len(self.frames)
-        return True
+        offset = self.logo_offset()
+        # Repaint for a new frame, or once the float has moved a visible amount.
+        if self.frame_index != before[0] or abs(offset[0] - before[1][0]) + abs(offset[1] - before[1][1]) >= .25:
+            self.drawn_offset = offset
+            return True
+        return mix > 0
+
+    def logo_offset(self):
+        """(dx, dy) of the idle float; it fades out while the logo dances."""
+        still = 1.0 - self.logo_mix()
+        angle = 2 * math.pi * self.float_phase / IDLE_FLOAT_PERIOD
+        return (IDLE_FLOAT_X * math.sin(angle * .5) * still, IDLE_FLOAT_Y * math.sin(angle) * still)
 
     def logo_mix(self):
-        """How much of the dance shows: 0 = the static logo, 1 = the dance."""
+        """How much the logo dances: 0 = idle waves, 1 = full dance."""
         return self.ease(self.talk_mix)
 
     def logo_scale(self):
-        # Only the dance grows with the voice; the static logo stays put.
+        # Only the dance grows with the voice; the idle waves stay at rest size.
         return 1.0 + GROWTH * math.sqrt(max(0.0, self.level)) * self.logo_mix()
 
     def current_logo(self):
-        return self.compose_logo(self.logo_mix())
+        return self.frames[self.frame_index]
 
     def compose_logo(self, mix):
-        """The static logo and the current dance frame, crossfaded by mix."""
-        frame = self.frames[self.frame_index]
-        if mix <= 0:
-            return self.static_logo
-        if mix >= 1:
-            return frame
-        blend = QPixmap(frame.size())
-        blend.fill(Qt.transparent)
-        p = QPainter(blend)
-        p.setRenderHint(QPainter.SmoothPixmapTransform)
-        p.setOpacity(1 - mix)
-        p.drawPixmap(0, 0, self.static_logo)
-        # Adding the weighted layers is a true crossfade: where the two strokes
-        # overlap the mark stays opaque instead of dipping halfway through.
-        p.setCompositionMode(QPainter.CompositionMode_Plus)
-        p.setOpacity(mix)
-        p.drawPixmap(0, 0, frame)
-        p.end()
-        return blend
+        """The frame on screen (idle and dance share the same frames)."""
+        return self.frames[self.frame_index]
 
     def paintEvent(self, event):
         if self.mode == "hidden":
@@ -554,8 +564,9 @@ class AirootOverlay(ListeningOverlay):
             frame = self.compose_logo(self.morph_mix)
             scale = self.morph_scale * (1 - .75 * t)
             width, height = LOGO_WIDTH * scale, LOGO_HEIGHT * scale
+            dx, dy = (c * (1 - t) for c in self.morph_offset)
             p.setOpacity(1 - t)
-            p.drawPixmap(QRectF((self.width() - width) / 2, center_y - height / 2, width, height), frame, QRectF(frame.rect()))
+            p.drawPixmap(QRectF((self.width() - width) / 2 + dx, center_y - height / 2 + dy, width, height), frame, QRectF(frame.rect()))
         p.setOpacity(self.ease((t - .45) / .55))
         p.setFont(QFont("Segoe UI", 10))
         p.setPen(QColor(248, 241, 244))

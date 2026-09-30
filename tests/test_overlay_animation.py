@@ -65,7 +65,7 @@ class TestOverlayAnimation(unittest.TestCase):
     def grab(self):
         return self.overlay.grab().toImage().convertToFormat(QImage.Format_ARGB32_Premultiplied)
 
-    def rendered(self, pixmap, scale=1.0):
+    def rendered(self, pixmap, scale=1.0, offset=(0.0, 0.0)):
         """The listening overlay drawn by hand showing pixmap at scale."""
         m = self.module
         image = QImage(self.overlay.size(), QImage.Format_ARGB32_Premultiplied)
@@ -73,7 +73,8 @@ class TestOverlayAnimation(unittest.TestCase):
         p = QPainter(image)
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         width, height = m.LOGO_WIDTH * scale, m.LOGO_HEIGHT * scale
-        bounds = QRectF((self.overlay.width() - width) / 2, m.LOGO_TOP - (height - m.LOGO_HEIGHT) / 2, width, height)
+        bounds = QRectF((self.overlay.width() - width) / 2 + offset[0],
+                        m.LOGO_TOP - (height - m.LOGO_HEIGHT) / 2 + offset[1], width, height)
         p.drawPixmap(bounds, pixmap, QRectF(pixmap.rect()))
         p.end()
         return image
@@ -135,29 +136,45 @@ class TestOverlayAnimation(unittest.TestCase):
             for x in range(image.width()):
                 self.assertEqual(image.pixelColor(x, y).alpha(), 0)
 
-    def test_silence_shows_static_logo_without_frames_or_repaints(self):
+    def test_silence_keeps_the_waves_moving_without_growing(self):
         m = self.module
-        frame = self.overlay.frame_index
+        start = self.overlay.dance_phase
+        offsets = []
         with patch.object(self.overlay, "update") as update:
             end = self.run_for(10.0, 2.0, 0)
-            # Room noise under TALK_ON is still silence: no dance, no growth.
-            self.run_for(end, 1.0, .06)
+            # Room noise under TALK_ON is still silence: slow waves, no growth.
+            for n in range(1, 21):
+                self.overlay.audio_peak = .06
+                self.tick(end + n * .05)
+                offsets.append(self.overlay.logo_offset())
         self.assertGreater(self.overlay.level, m.TALK_OFF)
         self.assertLess(self.overlay.level, m.TALK_ON)
-        update.assert_not_called()
         self.assertFalse(self.overlay.talking)
         self.assertEqual(self.overlay.talk_mix, 0)
-        self.assertEqual(self.overlay.frame_index, frame)
-        self.assertIs(self.overlay.current_logo(), self.overlay.static_logo)
         self.assertEqual(self.overlay.logo_scale(), 1.0)
-        self.assertEqual(self.grab(), self.rendered(self.overlay.static_logo))
+        # Three seconds of silence play ~IDLE_SPEED frames per second...
+        self.assertAlmostEqual(self.overlay.dance_phase - start, 3.0 * m.IDLE_SPEED, delta=1)
+        self.assertGreater(update.call_count, 10)
+        # ...and the logo floats a little, never far from its spot.
+        self.assertGreater(max(abs(dy) for _dx, dy in offsets), .5)
+        for dx, dy in offsets:
+            self.assertLessEqual(abs(dx), m.IDLE_FLOAT_X + 1e-9)
+            self.assertLessEqual(abs(dy), m.IDLE_FLOAT_Y + 1e-9)
+        self.assertIs(self.overlay.current_logo(), self.overlay.frames[self.overlay.frame_index])
+        self.assertEqual(self.grab(), self.rendered(self.overlay.current_logo(), 1.0,
+                                                    self.overlay.logo_offset()))
 
-    def test_silence_shows_the_wave_frame_not_the_flat_logo(self):
+    def test_silence_shows_the_wave_frames_not_the_flat_logo(self):
         m = self.module
-        self.assertIs(self.overlay.static_logo, self.overlay.frames[m.IDLE_FRAME])
         flat = m.load_static_logo(m.LOGO_WIDTH, m.LOGO_HEIGHT)
-        self.assertEqual(self.overlay.static_logo.size(), flat.size())
-        self.assertNotEqual(self.overlay.static_logo.toImage(), flat.toImage())
+        self.run_for(10.0, 1.0, 0)
+        shown = self.overlay.current_logo()
+        self.assertIn(shown, self.overlay.frames)
+        self.assertEqual(shown.size(), flat.size())
+        self.assertNotEqual(shown.toImage(), flat.toImage())
+
+    def test_first_frame_on_show_is_the_idle_frame(self):
+        self.assertEqual(self.overlay.frame_index, self.module.IDLE_FRAME)
 
     def test_talking_dances_at_a_steady_pace(self):
         m = self.module
@@ -203,14 +220,13 @@ class TestOverlayAnimation(unittest.TestCase):
     def test_dance_follows_voice_and_settles_in_silence(self):
         m = self.module
         self.tick(10.1)
-        self.assertEqual(self.overlay.frame_index, 0)
-        self.assertIs(self.overlay.current_logo(), self.overlay.static_logo)
+        self.assertEqual(self.overlay.logo_scale(), 1.0)
         self.overlay.audio_peak = .8
         self.tick(10.2)
         self.assertGreater(self.overlay.level, .6)
-        self.assertGreater(self.overlay.frame_index, 0)
+        self.assertGreater(self.overlay.logo_scale(), 1.0)
         # It keeps dancing until the level has stayed under TALK_OFF for
-        # QUIET_HOLD, then crossfades back to the static logo.
+        # QUIET_HOLD, then eases back to the slow idle waves.
         self.overlay.audio_peak = 0
         now, quiet_from = 10.2, None
         while self.overlay.talking:
@@ -222,22 +238,25 @@ class TestOverlayAnimation(unittest.TestCase):
         self.assertGreater(self.overlay.talk_mix, 0)
         now = self.run_for(now, m.TALK_FADE + .05, 0)
         self.assertEqual(self.overlay.talk_mix, 0)
-        self.assertIs(self.overlay.current_logo(), self.overlay.static_logo)
-        frame = self.overlay.frame_index
+        phase = self.overlay.dance_phase
         self.run_for(now, 2.0, 0)
-        self.assertEqual(self.overlay.frame_index, frame)
+        # Idle again: still moving, at the idle pace, back at rest size.
+        self.assertAlmostEqual(self.overlay.dance_phase - phase, 2.0 * m.IDLE_SPEED, delta=1)
         self.assertLess(self.overlay.level, .001)
-        self.assertEqual(self.grab(), self.rendered(self.overlay.static_logo))
+        self.assertAlmostEqual(self.overlay.logo_scale(), 1.0, places=2)
 
-    def test_crossfade_blends_static_logo_into_the_dance(self):
-        self.run_for(10.0, .1, .8)
-        mix = self.overlay.logo_mix()
-        self.assertGreater(mix, 0)
-        self.assertLess(mix, 1)
-        blend = self.overlay.current_logo()
-        self.assertIsNot(blend, self.overlay.static_logo)
-        self.assertIsNot(blend, self.overlay.frames[self.overlay.frame_index])
-        self.assertEqual(blend.size(), self.overlay.static_logo.size())
+    def test_speed_ramps_between_idle_and_dance_without_jumps(self):
+        m = self.module
+        self.run_for(10.0, 1.0, 0)
+        last, steps = self.overlay.dance_phase, []
+        for n in range(1, 11):
+            self.overlay.audio_peak = .8
+            self.tick(11.0 + n * .02)
+            steps.append(self.overlay.dance_phase - last)
+            last = self.overlay.dance_phase
+        # Speeds up monotonically from the idle pace; no frame is skipped ahead.
+        self.assertGreater(steps[-1], steps[0])
+        self.assertLessEqual(max(steps), m.DANCE_SPEED * .02 + 1e-6)
 
     def test_morph_starts_at_identical_recording_frame(self):
         # Whatever is on screen: the static logo (a level alone never grows
