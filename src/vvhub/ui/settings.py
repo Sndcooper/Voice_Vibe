@@ -60,7 +60,7 @@ def validate(text: str, defaults: dict | None = None) -> tuple[list[str], list[s
                 errors.append(f"[[{section}]] must be an array of tables")
             continue
         if section not in defaults:
-            warnings.append(f"unknown section [{section}] (kept, Voice Vibe ignores it)")
+            warnings.append(f"[{section}] isn't in Voice Vibe's defaults (kept as is; check the spelling)")
             continue
         if not isinstance(value, dict):
             errors.append(f"[{section}] must be a table")
@@ -68,7 +68,7 @@ def validate(text: str, defaults: dict | None = None) -> tuple[list[str], list[s
         for key, item in value.items():
             known = defaults[section]
             if key not in known:
-                warnings.append(f"unknown key {section}.{key} (kept, Voice Vibe ignores it)")
+                warnings.append(f"{section}.{key} isn't in Voice Vibe's defaults (kept as is; check the spelling)")
             elif not _compatible(known[key], item):
                 errors.append(f"{section}.{key} should be a {_kind(known[key])}, not a {_kind(item)}")
     audio = data.get("audio") if isinstance(data.get("audio"), dict) else {}
