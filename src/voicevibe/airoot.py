@@ -116,6 +116,8 @@ class AirootBridge:
             return "hide"
         if state == "busy":
             return "transcribing"
+        if state == "thinking":
+            return "thinking"
         return "show" if self.device is None else f"show {self.device}"
 
     def _send(self, command: str) -> None:

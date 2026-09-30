@@ -79,6 +79,19 @@ class TestOverlayAnimation(unittest.TestCase):
         p.end()
         return image
 
+    def test_thinking_shows_thinking_not_transcribing(self):
+        self.packets.queue = [b"thinking"]
+        self.overlay.read_commands()
+        self.assertEqual(self.overlay.status, "Thinking...")
+        self.tick(10.4)
+        self.assertEqual(self.overlay.mode, "transcribing")
+        self.assertEqual(self.overlay.status, "Thinking...")
+
+    def test_dictation_still_says_transcribing(self):
+        self.packets.queue = [b"transcribing"]
+        self.overlay.read_commands()
+        self.assertEqual(self.overlay.status, "Transcribing...")
+
     def test_processing_stays_compact_and_fades_on_completion(self):
         size, position = self.overlay.size(), self.overlay.pos()
         self.overlay.begin_transcribing()

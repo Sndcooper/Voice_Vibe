@@ -266,11 +266,11 @@ class ListeningOverlay(QWidget):
                 self.busy = False
                 self.status = "Listening"
                 self.show_listening()
-            elif verb in ("transcribing", "busy"):
+            elif verb in ("transcribing", "busy", "thinking"):
                 # Release the microphone: the caller already has the audio.
                 self.stop_microphone()
                 self.busy = True
-                self.status = "Transcribing"
+                self.status = "Thinking" if verb == "thinking" else "Transcribing"
                 self.show()
                 self.raise_()
             elif verb == "hide":
@@ -394,8 +394,9 @@ class AirootOverlay(ListeningOverlay):
         self.pending = "hide"
         self.finish_transcribing()
 
-    def begin_transcribing(self):
+    def begin_transcribing(self, label="Transcribing..."):
         if self.mode in ("gather", "transcribing"):
+            self.status = label
             return
         # Morph from exactly what is on screen: the static logo, the dance, or
         # a crossfade between them, at its current size.
@@ -409,7 +410,7 @@ class AirootOverlay(ListeningOverlay):
         self.completed = False
         self.pending = "hide"
         self.busy = True
-        self.status = "Transcribing..."
+        self.status = label
         self.setWindowOpacity(1)
         self.show()
         self.raise_()
@@ -446,8 +447,8 @@ class AirootOverlay(ListeningOverlay):
                     self.stop_microphone()
                     self.device = int(argument)
                 self.show_listening()
-            elif verb in ("transcribing", "busy"):
-                self.begin_transcribing()
+            elif verb in ("transcribing", "busy", "thinking"):
+                self.begin_transcribing("Thinking..." if verb == "thinking" else "Transcribing...")
             elif verb == "hide":
                 self.hide_listening()
             elif verb == "quit":
@@ -570,7 +571,7 @@ class AirootOverlay(ListeningOverlay):
         p.setOpacity(self.ease((t - .45) / .55))
         p.setFont(QFont("Segoe UI", 10))
         p.setPen(QColor(248, 241, 244))
-        p.drawText(pill, Qt.AlignCenter, "Transcribing...")
+        p.drawText(pill, Qt.AlignCenter, self.status)
         p.end()
 
 
