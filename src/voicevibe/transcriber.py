@@ -17,7 +17,9 @@ from .cuda_setup import cuda_available, register_cuda_dlls
 
 log = logging.getLogger(__name__)
 
-# Short aliases -> Hugging Face repos, so config stays readable.
+# [model].temperature_fallback: retried warmer only when a decode loops or is
+# unsure, so a clean decode stays deterministic (the first entry is 0).
+FALLBACK_TEMPERATURES = (0.0, 0.2, 0.4, 0.6)
 MODEL_ALIASES = {
     "large-v3-turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
     "turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
@@ -269,13 +271,17 @@ class Transcriber:
         if not audio.size:
             return ""
 
+        fallback = bool(self.cfg.get("temperature_fallback", False))
         segments, _info = self.model.transcribe(
             audio,
             language=language,
             beam_size=int(beam_size or self.cfg.get("beam_size", 3) or 3),
             vad_filter=bool(self.cfg.get("vad_filter", False)),
-            # Deterministic decoding: avoid random high-temperature retries.
-            temperature=0.0,
+            # Deterministic by default. With temperature_fallback, a decode that
+            # loops ("...fix it and then write it up and then...") or is unsure
+            # trips faster-whisper's compression-ratio / log-prob checks and is
+            # decoded again, warmer.
+            temperature=list(FALLBACK_TEMPERATURES) if fallback else 0.0,
             condition_on_previous_text=False,
             initial_prompt=self.initial_prompt,
             # Sits beside initial_prompt in the decoder context; only a
@@ -286,4 +292,24 @@ class Transcriber:
             no_speech_threshold=self.cfg.get("no_speech_threshold"),
             log_prob_threshold=float(self.cfg.get("log_prob_threshold", -1.0)),
         )
-        return "".join(segment.text for segment in segments).strip()
+        kept = []
+        for segment in segments:
+            if self._unsure_short(segment):
+                log.info("Dropped an unsure short segment %r (avg_logprob %.2f).",
+                         segment.text.strip(), segment.avg_logprob)
+                continue
+            kept.append(segment.text)
+        return "".join(kept).strip()
+
+    def _unsure_short(self, segment: object) -> bool:
+        """[model].drop_unsure_short: a few words the decoder was unsure of.
+
+        Measured 2026-09-29: real speech decodes at avg_logprob -0.18 to -0.23,
+        silence phantoms ("Thank you.", "Yeah, yeah") at -0.4 to -1.8.
+        """
+        if not self.cfg.get("drop_unsure_short", False):
+            return False
+        words = len(str(getattr(segment, "text", "")).split())
+        logprob = float(getattr(segment, "avg_logprob", 0.0))
+        return (words <= int(self.cfg.get("unsure_max_words", 5))
+                and logprob < float(self.cfg.get("unsure_logprob", -0.8)))

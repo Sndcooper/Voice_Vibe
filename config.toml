@@ -50,10 +50,19 @@ language = "en"
 # Same model and precision; a small beam considers more word candidates.
 # This may take slightly longer than greedy decoding (beam_size = 1).
 beam_size = 3
-# Raw fidelity: decode quiet speech without amplitude or no-speech gates.
-# VAD is opt-in: it can trim silence, but may also miss soft speech.
-vad_filter = false
+# Silero VAD: skip silence before decoding. Stops the phantom "Thank you." /
+# "I'll see you later." that Whisper invents on silence; measured 2026-09-29
+# to cost no accuracy on quiet speech. Set false for fully raw decoding.
+vad_filter = true
 log_prob_threshold = -1.0
+# Re-decode, warmer, only when a decode loops or is unsure (faster-whisper's
+# compression-ratio and log-prob checks). Clean decodes stay deterministic.
+temperature_fallback = true
+# Drop a segment of at most unsure_max_words words decoded below
+# unsure_logprob: real speech sits near -0.2, silence phantoms below -0.4.
+drop_unsure_short = true
+unsure_max_words = 5
+unsure_logprob = -0.8
 # Bias the decoder toward your vocabulary. Keep it short.
 initial_prompt = ""
 # A second, small model for short command-like utterances: wake checks while
@@ -349,7 +358,8 @@ quit_on_exit = true
 [vocab]
 # Names and jargon it would otherwise spell by sound. Passed to faster-whisper
 # as hotwords; costs nothing at runtime.
-hotwords = []
+# The tools you talk to: "run Claude" was heard as "surround the cloud".
+hotwords = ["Claude", "Codex", "Kiro", "Notion", "LinkedIn", "GitHub", "terminal"]
 # Add a short hint in the style of the front app to the decoder prompt: code
 # words in editors and terminals, plain prose in Claude / ChatGPT. Not used
 # while a session waits for its wake word.
