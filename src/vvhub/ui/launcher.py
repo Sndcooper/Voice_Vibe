@@ -156,6 +156,24 @@ def start(voicevibe_args: list[str], *, hub_up: Callable[..., bool] = hub_up,
     return 0
 
 
+# ---- control panel (tray entry) -------------------------------------------------
+def open_control_panel(spawn: Callable[..., int] = spawn) -> int:
+    """Start `pythonw -m vvhub.ui` detached; it focuses an already open window itself."""
+    return spawn([pythonw(), "-m", "vvhub.ui"], cwd=REPO, env=child_env())
+
+
+def add_tray_entry(tray: Any, opener: Callable[[], Any] = open_control_panel) -> bool:
+    """Put a default "Control panel" item on top of Voice Vibe's tray menu (double-click opens it)."""
+    icon = getattr(tray, "icon", None)
+    if icon is None:
+        return False
+    import pystray
+
+    items = tuple(getattr(getattr(icon, "menu", None), "items", ()) or ())
+    icon.menu = pystray.Menu(pystray.MenuItem("Control panel", lambda: opener(), default=True), *items)
+    return True
+
+
 # ---- login autostart (HKCU Run) ----------------------------------------------
 def _winreg() -> Any:
     import winreg

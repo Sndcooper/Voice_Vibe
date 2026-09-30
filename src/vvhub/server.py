@@ -102,6 +102,13 @@ def create_app(hub: Hub) -> FastAPI:
     app.state.hub = hub
     if not hub.skills:
         hub.skills = discover(hub)
+    # WS5 control app: /ui/ page + token-protected /ui/api (vvhub/ui/api.py).
+    try:
+        from .ui.api import install as install_ui
+
+        install_ui(app)
+    except Exception:  # noqa: BLE001 - the hub works without its control app
+        log.exception("Control app API not loaded")
 
     @app.get("/health")
     async def health(authorization: str | None = Header(default=None)) -> dict:

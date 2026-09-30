@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Vibe control panel</title>
+<link rel="stylesheet" href="/ui/static/vendor/pico.min.css">
+<link rel="stylesheet" href="/ui/static/app.css">
+<script type="module" src="/ui/static/app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar">
+  <strong class="brand">Voice Vibe</strong>
+  <nav aria-label="Pages">
+    <ul id="tabs">
+      <li><a href="#status">Status</a></li>
+      <li><a href="#chats">Chats</a></li>
+      <li><a href="#services">Link services</a></li>
+      <li><a href="#approvals">Approvals <span id="pending-count" class="count" hidden></span></a></li>
+      <li><a href="#logs">Logs</a></li>
+      <li><a href="#reports">Reports</a></li>
+      <li><a href="#mic">Microphone</a></li>
+      <li><a href="#settings">Settings</a></li>
+      <li><a href="#office">Office</a></li>
+    </ul>
+  </nav>
+  <span id="link" class="link" role="status">connecting…</span>
+</header>
+<main id="main" class="container-fluid" tabindex="-1">
+  <p id="boot">Loading… If this stays here, open the panel from Voice Vibe's tray icon (Control panel).</p>
+</main>
+<div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>

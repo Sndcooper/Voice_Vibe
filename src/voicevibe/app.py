@@ -114,6 +114,12 @@ class VoiceVibe:
         )
         self.beeper = Beeper(bool(config.feedback.get("sounds", True)))
         self.tray = Tray(bool(config.feedback.get("tray_icon", True)), self.request_stop)
+        try:  # WS5: "Control panel" on top of the tray menu (double-click opens it)
+            from vvhub.ui.launcher import add_tray_entry
+
+            add_tray_entry(self.tray)
+        except Exception as exc:  # noqa: BLE001 - no hub package: the tray stays as it was
+            log.debug("control panel tray entry unavailable: %s", exc)
         self.overlay = Overlay(config.overlay)
         self.airoot = AirootBridge(config.airoot)
         # The overlay meters the same microphone dictation records from,
