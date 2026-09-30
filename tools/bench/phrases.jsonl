@@ -1,0 +1,46 @@
+{"id": "w01", "kind": "wake", "text": "hey computer"}
+{"id": "w02", "kind": "wake", "text": "ok computer"}
+{"id": "c01", "kind": "command", "text": "computer open terminal"}
+{"id": "c02", "kind": "command", "text": "computer press enter"}
+{"id": "c03", "kind": "command", "text": "computer run Claude"}
+{"id": "c04", "kind": "command", "text": "computer open Codex"}
+{"id": "c05", "kind": "command", "text": "computer switch to Kiro"}
+{"id": "c06", "kind": "command", "text": "computer scroll down"}
+{"id": "c07", "kind": "command", "text": "computer new tab"}
+{"id": "c08", "kind": "command", "text": "computer close this window"}
+{"id": "c09", "kind": "command", "text": "computer scratch that"}
+{"id": "c10", "kind": "command", "text": "computer select all"}
+{"id": "c11", "kind": "command", "text": "computer go back"}
+{"id": "c12", "kind": "command", "text": "computer click send"}
+{"id": "c13", "kind": "command", "text": "computer focus on my cursor"}
+{"id": "c14", "kind": "command", "text": "computer explain this"}
+{"id": "c15", "kind": "command", "text": "computer note this"}
+{"id": "c16", "kind": "command", "text": "computer save this conversation"}
+{"id": "c17", "kind": "command", "text": "computer open GitHub"}
+{"id": "c18", "kind": "command", "text": "computer check my LinkedIn notifications"}
+{"id": "c19", "kind": "command", "text": "hey computer open terminal and type git status"}
+{"id": "c20", "kind": "command", "text": "press enter"}
+{"id": "c21", "kind": "command", "text": "next one"}
+{"id": "c22", "kind": "command", "text": "click seven"}
+{"id": "d01", "kind": "dictation", "text": "Ask Claude to refactor the login handler and add unit tests."}
+{"id": "d02", "kind": "dictation", "text": "Run Claude in the VS Code terminal and fix the failing build."}
+{"id": "d03", "kind": "dictation", "text": "Open a pull request on GitHub after the tests pass."}
+{"id": "d04", "kind": "dictation", "text": "Send the weekly report to Notion before eight in the morning."}
+{"id": "d05", "kind": "dictation", "text": "The server returns an error when the bearer token is missing."}
+{"id": "d06", "kind": "dictation", "text": "First fix it and then write it up and then send it to the team for review."}
+{"id": "d07", "kind": "dictation", "text": "Codex keeps timing out, so switch the model and try the prompt again."}
+{"id": "d08", "kind": "dictation", "text": "Tell Kiro to read the task file and claim the next workstream."}
+{"id": "d09", "kind": "dictation", "text": "Post a short update on LinkedIn about the new voice assistant."}
+{"id": "d10", "kind": "dictation", "text": "I think the microphone was muted, can you check the input device?"}
+{"id": "d11", "kind": "dictation", "text": "Let's meet tomorrow afternoon to go over the design review."}
+{"id": "d12", "kind": "dictation", "text": "Please summarize this page and save the key points to my notes."}
+{"id": "d13", "kind": "dictation", "text": "The quick brown fox jumps over the lazy dog near the river bank."}
+{"id": "d14", "kind": "dictation", "text": "Commit the changes on the automation branch and push them to the private remote."}
+{"id": "d15", "kind": "dictation", "text": "Search the web for the latest research on local speech recognition."}
+{"id": "d16", "kind": "dictation", "text": "Remind me to call the bank about the credit card statement."}
+{"id": "d17", "kind": "dictation", "text": "Actually, never mind, let's leave it as it is for now."}
+{"id": "d18", "kind": "dictation", "text": "This paragraph should stay exactly as I say it, with no extra words at the end."}
+{"id": "s01", "kind": "silence", "text": "", "seconds": 5}
+{"id": "s02", "kind": "silence", "text": "", "seconds": 8}
+{"id": "n01", "kind": "noise", "text": "", "seconds": 5, "prompt": "type on your keyboard, do not speak"}
+{"id": "n02", "kind": "noise", "text": "", "seconds": 5, "prompt": "tap the desk or move your chair, do not speak"}
