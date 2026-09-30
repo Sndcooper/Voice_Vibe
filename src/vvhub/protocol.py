@@ -16,7 +16,7 @@ TYPES = frozenset({
     "hello", "welcome", "request", "reply", "confirm", "confirm_result",
     "approval_request", "approval_result", "run_steps", "steps_result",
     "get_context", "context", "list_mics", "set_mic", "mics", "ok",
-    "transcribe", "text", "notify", "ping", "pong", "error",
+    "transcribe", "text", "notify", "ping", "pong", "error", "armed",
 })
 
 ROLES = frozenset({"voicevibe", "bot", "ui"})

@@ -195,7 +195,7 @@ class OfflineTests(unittest.TestCase):
 
     def test_handlers_map_to_replies(self) -> None:
         c = HubClient({"confirm": lambda p, t: True,
-                       "get_context": lambda deep: {"pinned": deep},
+                       "get_context": lambda deep, pin=None: {"pinned": deep},
                        "run_steps": Mock(side_effect=ValueError("bad step"))})
         ok = c._handle(protocol.message("confirm", prompt="?", timeout=2))
         self.assertEqual((ok["type"], ok["approved"]), ("confirm_result", True))

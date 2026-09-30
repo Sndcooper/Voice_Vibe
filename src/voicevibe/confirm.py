@@ -66,6 +66,9 @@ class VoiceConfirmer:
         self.clock = clock
         self._answers: queue.Queue[Any] | None = None
         self._lock = threading.Lock()
+        # What was heard for the last verdict, so the hub can re-check a "yes"
+        # itself instead of trusting a bare boolean ("" on timeout).
+        self.last_answer = ""
 
     @property
     def pending(self) -> bool:
@@ -98,6 +101,7 @@ class VoiceConfirmer:
         return None
 
     def __call__(self, prompt: str, timeout: float) -> bool:
+        self.last_answer = ""
         if not self.listening():
             log.warning("Cannot confirm %r: no open session to hear the answer.", prompt)
             return False
@@ -129,6 +133,7 @@ class VoiceConfirmer:
                     if text.strip():
                         log.info("(confirming, ignored) %s", text.strip())
                     continue
+                self.last_answer = text.strip()
                 log.info("Confirmation %s: %s", "given" if verdict else "refused", text.strip())
                 self.show("Confirmed" if verdict else "Cancelled")
                 return verdict

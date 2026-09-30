@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import queue
 import sys
@@ -11,8 +12,9 @@ import time
 import numpy as np
 
 from .airoot import AirootBridge
-from .audio import Recorder, SegmentRecorder, device_label
+from .audio import Recorder, SegmentRecorder, device_label, is_loopback, refresh_devices
 from .actions import Cancelled, DEFAULT_CONFIRM_TIMEOUT, DEFAULT_CONFIRM_WORDS, Executor
+from .actions import parse as parse_steps
 from .config import Config
 from .confirm import DEFAULT_NO, DEFAULT_YES, VoiceConfirmer
 from .context import ContextBuilder, LocalScreen, purge_crops
@@ -142,12 +144,12 @@ class VoiceVibe:
         self.executor.say = self.voice.say
         if bool(config.hub.get("enabled", True)):
             self.hub = HubClient({
-                # A hub approval is a spoken yes/no, only while a session can hear it.
-                "confirm": lambda prompt, timeout: (
-                    self.session.is_recording and self.confirmer(prompt, timeout)),
-                "get_context": lambda deep: self.context.bundle(deep=deep),
-                "run_steps": lambda steps, dry_run: (
-                    None if dry_run else self.executor.run(steps, command="hub")),
+                "confirm": self._hub_confirm,
+                "get_context": lambda deep, pin=None: self.context.bundle(deep=deep, pin=pin),
+                "run_steps": self._hub_steps,
+                "list_mics": self._list_mics,
+                "set_mic": self._set_mic,
+                "transcribe": self._transcribe_note,
             })
         self.history = History(
             enabled=bool(config.history.get("enabled", True)),
@@ -406,6 +408,9 @@ class VoiceVibe:
                 key,
             )
         self._indicate(self._session_tray())
+        if self.hub is not None:
+            # The hub answers with an unspoken report summary, if there is one.
+            self.hub.armed(self._say_hub_reply)
 
     def _command_hint(self) -> str:
         if not self.router.enabled:
@@ -787,6 +792,97 @@ class VoiceVibe:
                 self.voice.say(speak)
         self.beeper.done()
         return True
+
+    # ------------------------------------------------------ the hub asks us
+    def _hub_confirm(self, prompt: str, timeout: float) -> dict:
+        """A spoken yes/no for a hub approval (TASK.md §3.2 `confirm`).
+
+        With no session mic open nobody can answer, so say `unavailable`:
+        the hub then asks on Telegram instead of recording a refusal.
+        """
+        if not self.session.is_recording:
+            return {"approved": False, "answer": "", "unavailable": True}
+        approved = self.confirmer(prompt, timeout) is True
+        return {"approved": approved, "answer": getattr(self.confirmer, "last_answer", "")}
+
+    def _hub_steps(self, steps: list, dry_run: bool) -> None:
+        """Hub steps through the normal executor: confirmation gates and
+        click-by-name resolution included. A dry run only validates."""
+        if dry_run:
+            parse_steps(steps)
+            return
+        self.executor.run(steps, command="hub")
+
+    def _mic_names(self) -> list[tuple[int, str]]:
+        """Input devices as (index, name), once per device across host APIs."""
+        from .audio import _input_devices, _is_alias
+
+        seen: set[str] = set()
+        found: list[tuple[int, str]] = []
+        for index, dev in _input_devices():
+            name = str(dev["name"]).strip()
+            key = name.casefold()[:31]  # MME cuts names to 31 characters
+            if not name or _is_alias(name) or key in seen:
+                continue
+            seen.add(key)
+            found.append((index, name))
+        return found
+
+    def _list_mics(self) -> dict:
+        # Re-reading devices re-initialises PortAudio: never under an open stream.
+        if not (self.session.is_recording or self.recorder.is_recording):
+            refresh_devices()
+        label = device_label(self._mic if isinstance(self._mic, int) else None)
+        current = label.split("] ", 1)[1] if "] " in label else str(self._mic or "")
+        return {"devices": [name for _, name in self._mic_names()], "current": current}
+
+    def _set_mic(self, device: object) -> None:
+        """Switch microphones for this run (config.toml is not changed).
+
+        Takes effect on the next recording or session; a running one keeps
+        its stream. Never a loopback such as Stereo Mix.
+        """
+        wanted = str(device or "").strip().casefold()
+        if not wanted:
+            raise LookupError("no microphone was named")
+        names = self._mic_names()
+        match = next(((i, n) for i, n in names if n.casefold() == wanted), None)
+        if match is None:
+            match = next(((i, n) for i, n in names
+                          if wanted in n.casefold() or n.casefold() in wanted), None)
+        if match is None:
+            raise LookupError(f"no microphone called {device}")
+        index, name = match
+        if is_loopback(name):
+            raise ValueError(f"{name} records the speakers, not you")
+        self.config.audio["input_device"] = index  # pinned until restart
+        self._mic = index
+        self.recorder.device = index
+        self.session.device = index
+        self.airoot.set_device(index)
+        log.info("Microphone set by the hub: %s.", device_label(index))
+
+    def _transcribe_note(self, data: bytes, fmt: str = "ogg") -> str:
+        """A Telegram voice note (ogg/opus, m4a...) through the loaded Whisper."""
+        if self.transcriber is None:
+            raise RuntimeError("the speech model is still loading")
+        # faster-whisper's own PyAV decoder: any container, resampled to 16 kHz mono.
+        from faster_whisper.audio import decode_audio
+
+        audio = decode_audio(io.BytesIO(data),
+                             sampling_rate=int(self.config.audio["sample_rate"]))
+        return self._transcribe_job(audio, INSERT, armed=False).strip()
+
+    def _say_hub_reply(self, reply: dict) -> None:
+        """Speak what the hub volunteered on arming (the report summary)."""
+        text = str(reply.get("text") or "").strip()
+        if not text:
+            return
+        log.info("-> hub (on arm) | %s", text)
+        self.history.add(action="hub_report", spoken=text)
+        self.overlay.show(text)
+        if reply.get("speak", True):
+            self.voice.say(text)
 
     def _save_conversation(self, heard: str, elapsed: float) -> None:
         """Keep the last two days of turns forever (history/saved/)."""

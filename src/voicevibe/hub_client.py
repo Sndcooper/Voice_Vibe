@@ -187,7 +187,36 @@ class HubClient:
         """Fire and forget (e.g. "save this conversation" on the hub too)."""
         if self._ready.is_set() and self._loop is not None:
             msg = protocol.message("request", text=text, context=context or {}, source="voice")
-            asyncio.run_coroutine_threadsafe(self._send_wait(msg, 10.0), self._loop)
+            self._submit(self._send_wait(msg, 10.0))
+
+    def armed(self, on_reply: Callable[[dict], Any]) -> None:
+        """Tell the hub a session just armed. A reply with text (the unspoken
+        report summary) goes to `on_reply` on a worker thread. Never blocks."""
+        if not self._ready.is_set():
+            return
+
+        async def go() -> None:
+            reply = await self._send_wait(protocol.message("armed"), 5.0)
+            if reply and reply.get("type") == "reply" and reply.get("text"):
+                await asyncio.get_running_loop().run_in_executor(None, on_reply, reply)
+
+        self._submit(go())
+
+    def _submit(self, coro: Any) -> None:
+        """Run `coro` on the link's loop, strongly referenced until done."""
+        loop = self._loop
+
+        def spawn() -> None:
+            task = asyncio.ensure_future(coro)
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+
+        try:
+            if loop is None:
+                raise RuntimeError("no loop")
+            loop.call_soon_threadsafe(spawn)
+        except RuntimeError:
+            coro.close()
 
     async def _send_wait(self, msg: dict, wait: float) -> dict | None:
         if self._ws is None:
@@ -219,13 +248,20 @@ class HubClient:
                 return protocol.reply_to(msg, "pong")
             if kind == "confirm":
                 fn = self._need("confirm")
-                approved = bool(fn(str(msg.get("prompt", "")),
-                                   float(msg.get("timeout") or protocol.timeout_for("confirm"))))
-                return protocol.reply_to(msg, "confirm_result", approved=approved,
-                                         answer="yes" if approved else "no")
+                result = fn(str(msg.get("prompt", "")),
+                            float(msg.get("timeout") or protocol.timeout_for("confirm")))
+                if isinstance(result, dict):
+                    fields = {"approved": result.get("approved") is True,
+                              "answer": str(result.get("answer") or "")}
+                    if result.get("unavailable"):
+                        # Nobody can hear the question: the hub asks elsewhere.
+                        fields["unavailable"] = True
+                else:
+                    fields = {"approved": result is True, "answer": ""}
+                return protocol.reply_to(msg, "confirm_result", **fields)
             if kind == "get_context":
-                return protocol.reply_to(msg, "context",
-                                         **self._need("get_context")(bool(msg.get("deep"))))
+                bundle = self._need("get_context")(bool(msg.get("deep")), msg.get("pin"))
+                return protocol.reply_to(msg, "context", **bundle)
             if kind == "list_mics":
                 return protocol.reply_to(msg, "mics", **self._need("list_mics")())
             if kind == "set_mic":

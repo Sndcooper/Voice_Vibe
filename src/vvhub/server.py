@@ -55,6 +55,9 @@ class Hub:
     bus: Bus = field(default_factory=Bus)
     skills: dict = field(default_factory=dict)
     components: dict = field(default_factory=dict)
+    # `factory(hub) -> obj with start()/shutdown()` (WS4's ReportScheduler).
+    # None in tests, so no test ever polls GitHub or writes real reports.
+    scheduler_factory: Any = None
 
 
 def _authorized(hub: Hub, presented: str | None) -> bool:
@@ -75,10 +78,24 @@ def create_app(hub: Hub) -> FastAPI:
                 await asyncio.sleep(PURGE_INTERVAL)
 
         task = asyncio.create_task(purge_loop())
+        scheduler = None
+        if hub.scheduler_factory is not None:
+            try:
+                scheduler = hub.scheduler_factory(hub)
+                scheduler.start()  # inside the running loop, as it requires
+                log.info("Report scheduler started")
+            except Exception:  # noqa: BLE001 - no reports beats no hub
+                log.exception("Report scheduler did not start")
+                scheduler = None
         try:
             yield
         finally:
             task.cancel()
+            if scheduler is not None:
+                try:
+                    scheduler.shutdown()
+                except Exception:  # noqa: BLE001
+                    log.exception("Report scheduler shutdown failed")
 
     app = FastAPI(title="vvhub", version=__version__, docs_url=None, redoc_url=None,
                   openapi_url=None, lifespan=lifespan)
@@ -172,8 +189,26 @@ async def _answer(hub: Hub, msg: dict, send: Any) -> None:
     elif kind == "notify":
         for role in ("bot", "ui"):
             await hub.bus.notify(role, msg)
+    elif kind == "armed":
+        # A session just armed: the newest report summary, if not yet spoken.
+        text = _take_spoken()
+        await send(protocol.reply_to(msg, "reply", text=text, speak=bool(text),
+                                     handled=bool(text), ok=True))
     else:
         await send(protocol.reply_to(msg, "error", message=f"unexpected {kind}", code="unexpected"))
+
+
+def _take_spoken() -> str:
+    """WS4's reports skill: the unspoken summary, handed out once."""
+    try:
+        from .skills.reports import take_spoken
+    except Exception:  # noqa: BLE001 - no reports skill, nothing to say
+        return ""
+    try:
+        return take_spoken() or ""
+    except Exception:  # noqa: BLE001
+        log.exception("take_spoken failed")
+        return ""
 
 
 async def _close(socket: WebSocket, code: int) -> None:
@@ -183,5 +218,16 @@ async def _close(socket: WebSocket, code: int) -> None:
         pass
 
 
+def _scheduler_factory() -> Any:
+    """WS4's ReportScheduler class (called as factory(hub)), or None."""
+    try:
+        from .scheduler import ReportScheduler
+    except Exception as exc:  # noqa: BLE001 - reports are optional (rule 19)
+        log.warning("Reports off: %s", exc)
+        return None
+    return ReportScheduler
+
+
 def build_hub(store_path: Path | None = None) -> Hub:
-    return Hub(token=load_or_create_token(), store=Store(store_path or data_dir() / "hub.db"))
+    return Hub(token=load_or_create_token(), store=Store(store_path or data_dir() / "hub.db"),
+               scheduler_factory=_scheduler_factory())
