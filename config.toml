@@ -70,6 +70,14 @@ initial_prompt = ""
 # above transcribes it again, so dictation keeps full accuracy). "auto" is
 # base.en, skipped when the model above is no bigger; "" turns it off.
 command_model = "auto"
+# Speech engine (WS6, measured 2026-09-30, CONV.md §10):
+#   "whisper"  faster-whisper everywhere
+#   "parakeet" NVIDIA Parakeet TDT 0.6B v2 int8 on CPU (needs the `parakeet`
+#              extra; ~660 MB download on first use; no hotwords)
+#   "auto"     Whisper when a GPU is used; Parakeet on CPU-only machines if
+#              installed (else Whisper). On this laptop's voice at 4 threads:
+#              9.1% WER / 0.25 s vs small.en 13.0% / 1.71 s.
+engine = "auto"
 # Utterances up to this long get the command model's first pass. 0 disables it.
 command_max_seconds = 3.0
 

@@ -52,6 +52,9 @@ screen = [
 
 # [wake].engine = "openwakeword": a ~2 ms/frame wake word model instead of a
 # Whisper decode per utterance while waiting. Pulls in onnxruntime.
+# [model].engine = "parakeet" / "auto" on CPU-only machines (WS6): NVIDIA
+# Parakeet TDT 0.6B v2 int8 via onnx-asr (weights CC-BY-4.0).
+parakeet = ["onnx-asr==0.12.0", "onnxruntime==1.30.0"]
 wakeword = [
     "openwakeword>=0.6.0",
 ]

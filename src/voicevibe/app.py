@@ -1332,7 +1332,10 @@ class VoiceVibe:
         )
 
     def run(self) -> int:
-        self.transcriber = Transcriber(self.config.model)
+        # [model].engine: whisper | parakeet | auto (WS6, voicevibe/engines).
+        from .engines import create as create_transcriber
+
+        self.transcriber = create_transcriber(self.config.model)
         self.transcriber.hotwords = self.vocab.hotwords_text()
         self._set_wake_bias(False)
         self.transcriber.warmup(int(self.config.audio["sample_rate"]))
