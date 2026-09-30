@@ -226,13 +226,50 @@ class ModelChoiceTests(unittest.TestCase):
 
         llm = Timed()
         b = make(llm, models=self.CATALOG)
-        run(b.interpret(hub(), "a", {}))
+        ask = "ask claude code to continue"
+        run(b.interpret(hub(), ask, {}))
         b._resting["gemini-3.7-flash"] = time.monotonic() + 60  # force one run on the next model
-        run(b.interpret(hub(), "b", {}))
+        run(b.interpret(hub(), ask, {}))
         b._resting.clear()
-        run(b.interpret(hub(), "c", {}))
+        run(b.interpret(hub(), ask, {}))
         self.assertEqual([c["model"] for c in llm.calls],
                          ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.6-flash"])
+
+
+class TierTests(unittest.TestCase):
+    CATALOG = ModelChoiceTests.CATALOG
+
+    def test_needs_thought(self):
+        for text in ("ask claude code to add tests for the parser", "tell it to continue with what it was doing",
+                     "fix this", "computer refactor the jump simulation and explain why it fails when mass is 500g",
+                     "do that again but for the other file"):
+            self.assertTrue(broker.needs_thought(text), text)
+        for text in ("open notepad", "computer scroll down", "what time is it", "hello how are you",
+                     "computer open youtube"):
+            self.assertFalse(broker.needs_thought(text), text)
+
+    def test_simple_requests_go_to_lite_first(self):
+        llm = FakeLLM(reply())
+        b = make(llm, models=self.CATALOG)
+        run(b.interpret(hub(), "open notepad", {}))
+        self.assertEqual(llm.calls[-1]["model"], "gemini-3.5-flash-lite")
+        run(b.interpret(hub(), "ask claude code to add tests for the parser", {}))
+        self.assertEqual(llm.calls[-1]["model"], "gemini-3.7-flash")
+
+    def test_lite_failing_falls_back_to_flash(self):
+        from vvhub.llm import LLMUnavailable
+
+        class NoLite(FakeLLM):
+            async def __call__(self, messages, model="auto", max_tokens=800):
+                self.calls.append({"model": model})
+                if "lite" in model:
+                    raise LLMUnavailable("exhausted", "429")
+                return reply()
+
+        llm = NoLite()
+        brief = run(make(llm, models=self.CATALOG).interpret(hub(), "open notepad", {}))
+        self.assertIn("lite", llm.calls[0]["model"])
+        self.assertNotIn("lite", brief.model)
 
 
 class SafetyTests(unittest.TestCase):

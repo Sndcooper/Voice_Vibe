@@ -137,23 +137,34 @@ def _default_models() -> list[str]:
 
 _client: Any = None
 EXTRA = {"reasoning_effort": "none", "response_format": {"type": "json_object"}}
+_plain: set[str] = set()  # models that refused the extras (gemini-3.5-flash-lite: provider_bad_req)
+
+
+async def _post_plain_on_reject(model: str, body: dict) -> str:
+    try:
+        return await _client._post(body)  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "kind", "") != "rejected" and "invalid" not in str(exc).lower():
+            raise
+        _plain.add(model)
+        return await _client._post({k: v for k, v in body.items() if k not in EXTRA})  # noqa: SLF001
 
 
 def _default_complete(messages: list[dict], model: str = "auto", max_tokens: int = 800) -> Any:
     """WS2's FreeLLMAPI client, no retries (a failing model is rested, the next one tried).
 
     Asks for JSON and no thinking: Gemini 3.x Flash spent its whole token budget
-    thinking and took 7-14 s on a short request (2026-09-30); without thinking 3-4 s."""
+    thinking and took 7-14 s on a short request (2026-09-30); without thinking 3-4 s.
+    A model that rejects those extras is asked again plainly, and from then on."""
     global _client
     from . import llm
 
     if _client is None:
         _client = llm.Client(retries=0, timeout=TIMEOUT)
-    body = {"model": model, "messages": list(messages), "max_tokens": int(max_tokens), "stream": False, **EXTRA}
-    try:
+    body = {"model": model, "messages": list(messages), "max_tokens": int(max_tokens), "stream": False}
+    if model in _plain:
         return _client._post(body)  # noqa: SLF001 - complete() has no way to pass the extras
-    except TypeError:  # _post changed shape: plain completion
-        return _client.complete(messages, model=model, max_tokens=max_tokens)
+    return _post_plain_on_reject(model, {**body, **EXTRA})
 
 
 def _default_yes_no(state: Any, instruction: str) -> float:
@@ -193,8 +204,10 @@ class Broker:
         self._latency: dict[str, float] = {}  # seconds, moving average per model
 
     # ---- model --------------------------------------------------------------
-    async def models(self) -> list[str]:
-        """Models to try, best first; ones that failed recently go last."""
+    async def models(self, thoughtful: bool = True) -> list[str]:
+        """Models to try, best first: Flash for requests that need thought, Flash-Lite
+        (faster) for simple ones, the other tier as the fallback; ones that failed
+        recently go last."""
         if self.model_override:
             return [self.model_override]
         if not (self._models and time.monotonic() - self._models[0] < MODELS_TTL):
@@ -206,10 +219,16 @@ class Broker:
             self._models = (time.monotonic(), candidates(ids))
         now = time.monotonic()
         ready = [m for m in self._models[1] if self._resting.get(m, 0) <= now]
-        # Fastest model that has answered first (voice can't wait): 3.7 Flash took
-        # 9-12 s, 3 Flash preview 2-3 s on 2026-09-30; untried ones keep catalog order.
+        # Fastest model that has answered first within each tier (voice can't wait);
+        # untried ones keep catalog order.
         ready.sort(key=lambda m: self._latency.get(m, float("inf")))
-        return (ready or list(self._models[1]))[:MAX_TRIES]
+        lite = [m for m in ready if _is_lite(m)]
+        full = [m for m in ready if not _is_lite(m) and m != "auto"]
+        # Always keep one model of the other tier within MAX_TRIES as the fallback.
+        order = (full[:2] + lite[:1] + full[2:] + lite[1:]) if thoughtful \
+            else (lite[:1] + full[:1] + lite[1:2] + full[1:] + lite[2:])
+        order += [m for m in ready if m == "auto"]
+        return (order or list(self._models[1]))[:MAX_TRIES]
 
     async def model(self) -> str:
         return (await self.models())[0]
@@ -298,7 +317,7 @@ class Broker:
         started = time.monotonic()
         deadline = started + self.timeout
         try:
-            models = await self.models()
+            models = await self.models(needs_thought(text))
             work = await self._work() if not (context or {}).get("redacted") else ""
             messages = self.messages(hub, text, context or {}, conversation, work)
         except Exception as exc:  # noqa: BLE001
@@ -384,6 +403,23 @@ class Broker:
             log.info("broker: Laya %.2f < %.2f on the drafted prompt; dropped", score, LAYA_FLOOR)
             return ""
         return prompt
+
+
+def _is_lite(model: str) -> bool:
+    return "flash-lite" in model.rsplit("/", 1)[-1].lower()
+
+
+_THOUGHT = re.compile(
+    r"\b(claude|codex|kiro|code|coding|prompt|fix|bug|error|test|tests|refactor|implement|build|write|explain|"
+    r"why|debug|review|plan|research|summari[sz]e|draft|continue|again|previous|earlier|the other|that one|"
+    r"what (?:it|we|i|you) (?:was|were) doing)\b", re.I)
+
+
+def needs_thought(text: str) -> bool:
+    """Flash for anything that needs context or reasoning (coding agents, follow-ups
+    like "do that again", long requests); Flash-Lite for short plain commands."""
+    words = _strip_wake(text).split()
+    return len(words) > 12 or bool(_THOUGHT.search(" ".join(words)))
 
 
 def pick_model(ids: list[str]) -> str:
