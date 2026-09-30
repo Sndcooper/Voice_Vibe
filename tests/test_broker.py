@@ -179,6 +179,40 @@ class InterpretTests(unittest.TestCase):
         self.assertLessEqual(len(brief.target), 80)
 
 
+class ModelChoiceTests(unittest.TestCase):
+    CATALOG = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-robotics-er-2-preview",
+               "gemini-3.5-flash-lite", "gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-2.5-flash",
+               "gemini-2.5-flash-lite", "llama-3.3-70b", "google/gemini-3.6-flash-image"]
+
+    def test_newest_flash_first_lite_and_preview_later(self):
+        order = broker.candidates(self.CATALOG)
+        self.assertEqual(order[:5], ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
+                                     "gemini-2.5-flash", "gemini-3-flash-preview"])
+        self.assertEqual(order[-1], "auto")
+        self.assertNotIn("gemini-robotics-er-2-preview", order)
+        self.assertNotIn("google/gemini-3.6-flash-image", order)
+        self.assertEqual(broker.pick_model(self.CATALOG), "gemini-3.7-flash")
+
+    def test_failing_model_is_rested_and_next_one_used(self):
+        from vvhub.llm import LLMUnavailable
+
+        class Picky(FakeLLM):
+            async def __call__(self, messages, model="auto", max_tokens=800):
+                self.calls.append({"model": model})
+                if model == "gemini-3.7-flash":
+                    raise LLMUnavailable("exhausted", "429 rate limited")
+                return reply()
+
+        llm = Picky()
+        b = make(llm, models=self.CATALOG)
+        brief = run(b.interpret(hub(), "add tests", {}))
+        self.assertEqual(brief.model, "gemini-3.6-flash")
+        self.assertEqual([c["model"] for c in llm.calls], ["gemini-3.7-flash", "gemini-3.6-flash"])
+        run(b.interpret(hub(), "add tests", {}))
+        self.assertEqual(llm.calls[-1]["model"], "gemini-3.6-flash")  # 3.7 is resting
+        self.assertEqual(len(llm.calls), 3)
+
+
 class SafetyTests(unittest.TestCase):
     def test_request_cannot_add_or_drop_critical_words(self):
         self.assertEqual(broker.safe_request("delete the old branch", "clean up the old branch"),

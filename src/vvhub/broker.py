@@ -36,10 +36,11 @@ from .schemas import CATEGORIES
 
 log = logging.getLogger(__name__)
 
-TIMEOUT = 8.0
+TIMEOUT = 12.0  # Gemini 3.x Flash thinks: ~4-7 s measured 2026-09-30; Voice Vibe waits 20 s in all
 LAYA_FLOOR = 0.35
 MODELS_TTL = 600.0
-PREFERRED = ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-1.5-flash")
+REST_SECONDS = 600
+MAX_TRIES = 3
 TOOLS = {"claude_code": "Claude Code (CLI in a terminal)", "claude_app": "the Claude desktop app",
          "codex_app": "the Codex app", "vscode_terminal": "the VS Code terminal (claude / codex / kiro CLI)",
          "kiro": "Kiro CLI"}
@@ -134,10 +135,17 @@ def _default_models() -> list[str]:
     return [str(m.get("id", "")) for m in resp.json().get("data", [])]
 
 
+_client: Any = None
+
+
 def _default_complete(messages: list[dict], model: str = "auto", max_tokens: int = 800) -> Any:
+    """WS2's FreeLLMAPI client with no retries: a failing model is rested and the next one tried."""
+    global _client
     from . import llm
 
-    return llm.complete(messages, model=model, max_tokens=max_tokens)
+    if _client is None:
+        _client = llm.Client(retries=0, timeout=TIMEOUT)
+    return _client.complete(messages, model=model, max_tokens=max_tokens)
 
 
 def _default_yes_no(state: Any, instruction: str) -> float:
@@ -172,22 +180,27 @@ class Broker:
         self.enabled = os.environ.get("VVHUB_BROKER", "1").strip() not in ("0", "false", "off")
         self.model_override = os.environ.get("VVHUB_BROKER_MODEL") or None
         self.timeout = TIMEOUT
-        self._model: tuple[float, str] | None = None
+        self._models: tuple[float, list[str]] | None = None
+        self._resting: dict[str, float] = {}
 
     # ---- model --------------------------------------------------------------
-    async def model(self) -> str:
+    async def models(self) -> list[str]:
+        """Models to try, best first; ones that failed recently go last."""
         if self.model_override:
-            return self.model_override
-        if self._model and time.monotonic() - self._model[0] < MODELS_TTL:
-            return self._model[1]
-        try:
-            ids = await asyncio.wait_for(asyncio.to_thread(self.list_models), 6.0)
-        except Exception as exc:  # noqa: BLE001
-            log.info("broker: model list unavailable (%s); using auto", exc)
-            ids = []
-        chosen = pick_model(ids)
-        self._model = (time.monotonic(), chosen)
-        return chosen
+            return [self.model_override]
+        if not (self._models and time.monotonic() - self._models[0] < MODELS_TTL):
+            try:
+                ids = await asyncio.wait_for(asyncio.to_thread(self.list_models), 6.0)
+            except Exception as exc:  # noqa: BLE001
+                log.info("broker: model list unavailable (%s); using auto", exc)
+                ids = []
+            self._models = (time.monotonic(), candidates(ids))
+        now = time.monotonic()
+        ready = [m for m in self._models[1] if self._resting.get(m, 0) <= now]
+        return (ready or list(self._models[1]))[:MAX_TRIES]
+
+    async def model(self) -> str:
+        return (await self.models())[0]
 
     # ---- prompt ----------------------------------------------------------------
     @staticmethod
@@ -271,15 +284,31 @@ class Broker:
         except Exception:  # noqa: BLE001
             return None
         started = time.monotonic()
+        deadline = started + self.timeout
         try:
-            model = await self.model()
+            models = await self.models()
             work = await self._work() if not (context or {}).get("redacted") else ""
-            raw = await asyncio.wait_for(
-                self.complete(self.messages(hub, text, context or {}, conversation, work), model=model,
-                              max_tokens=700),
-                self.timeout)
-        except Exception as exc:  # noqa: BLE001 - pool exhausted / offline / timeout: old path
+            messages = self.messages(hub, text, context or {}, conversation, work)
+        except Exception as exc:  # noqa: BLE001
             log.info("broker skipped: %s", exc or type(exc).__name__)
+            return None
+        raw, model = None, ""
+        for model in models:
+            remaining = deadline - time.monotonic()
+            if remaining < 1.0:
+                break
+            try:
+                raw = await asyncio.wait_for(self.complete(messages, model=model, max_tokens=700), remaining)
+                break
+            except asyncio.TimeoutError:
+                log.info("broker: %s timed out; old path", model)
+                return None
+            except Exception as exc:  # noqa: BLE001 - 429 / removed model / upstream error: rest it, try the next
+                self._resting[model] = time.monotonic() + REST_SECONDS
+                log.info("broker: %s failed (%s); resting it %ds", model, str(exc)[:120] or type(exc).__name__,
+                         REST_SECONDS)
+        if raw is None:
+            log.info("broker skipped: no model answered")
             return None
         data = _parse(raw)
         if data is None or not isinstance(data.get("category", ""), str):
@@ -339,17 +368,29 @@ class Broker:
 
 
 def pick_model(ids: list[str]) -> str:
-    """Gemini Flash if FreeLLMAPI offers it, else FreeLLMAPI's own routing ("auto")."""
-    short = {i: i.rsplit("/", 1)[-1].lower() for i in ids if i}
-    for want in PREFERRED:
-        for full, name in short.items():
-            if name == want:
-                return full
-    flash = [f for f, n in short.items() if "gemini" in n and "flash" in n]
-    for full in flash:
-        if not any(bad in short[full] for bad in ("lite", "image", "thinking", "tts", "live")):
-            return full
-    return flash[0] if flash else "auto"
+    """The best Gemini Flash FreeLLMAPI lists, else its own routing ("auto")."""
+    return candidates(ids)[0]
+
+
+_FLASH = re.compile(r"^gemini-(\d+(?:\.\d+)?)-flash(-lite)?(?:-(preview|latest))?(?:-[\w.]+)?$")
+_NOT_TEXT = ("image", "tts", "live", "audio", "robotics", "embedding", "thinking")
+
+
+def candidates(ids: list[str]) -> list[str]:
+    """Gemini Flash models, newest first; lite and previews after the rest; "auto" last.
+
+    The catalog can list models Google already removed (gemini-2.5-flash, 2026-09-30),
+    so the broker tries these in order and rests one that fails."""
+    ranked = []
+    for full in ids:
+        name = (full or "").rsplit("/", 1)[-1].lower()
+        match = _FLASH.match(name)
+        if not match or any(bad in name for bad in _NOT_TEXT):
+            continue
+        version = float(match.group(1))
+        ranked.append(((match.group(2) is None, match.group(3) is None, version), full))
+    ordered = [full for _, full in sorted(ranked, reverse=True)]
+    return ordered + ["auto"]
 
 
 async def interpret(hub: Any, text: str, context: dict | None = None,
