@@ -56,6 +56,7 @@ DICTATING = "dictating"  # wake phrase heard, everything now goes to the cursor
 
 # In a plain shell these go to the window commands before the hub; anything
 # else there becomes a shell command.
+_NOT_FOUND = re.compile(r"I can't find|I don't see|Nothing (?:called|named)", re.I)
 _WINDOW_VERBS = re.compile(
     r"^(?:switch to|focus|bring up|minimi[sz]e|maximi[sz]e|restore|scroll|snap|lock|"
     r"close (?:the |this )?window|next tab|previous tab|new tab|close (?:the |this )?tab|stop)\b",
@@ -234,10 +235,20 @@ class VoiceVibe:
         self.airoot.set_state(self._airoot_state(state))
 
     def _airoot_state(self, state: str) -> str:
-        """Map the indicator state onto what the overlay should show."""
+        """Map the indicator state onto what the overlay should show.
+
+        In a Ctrl+Alt+W voice-control session the wait after you speak is
+        automation -- Whisper, then Laya / Gemini deciding what to do -- so the
+        overlay says "Thinking"; plain dictation keeps "Transcribing".
+        """
         if state == "busy":
-            return "busy"
+            return "thinking" if self._in_control_session() else "busy"
         return "listening" if self._is_listening(state) else "idle"
+
+    def _in_control_session(self) -> bool:
+        session = getattr(self, "session", None)
+        return bool(session is not None and session.is_recording
+                    and getattr(self, "_wake_state", None) == DICTATING)
 
     def _is_listening(self, state: str) -> bool:
         """Whether the mic is currently taking in speech meant for the cursor.
@@ -632,7 +643,10 @@ class VoiceVibe:
                     log.info("Nothing recognised (%.2fs).", elapsed)
                     self.beeper.empty()
                     continue
-                if visible_job:
+                # In a voice-control session "Thinking" lasts until the request
+                # is done (router, Laya, Gemini); dictation ends at the text.
+                thinking = visible_job and action == SESSION and self._in_control_session()
+                if visible_job and not thinking:
                     self.airoot.show_transcript(text)
                 if action == SPEAK:
                     self._do_speak(text, elapsed)
@@ -640,6 +654,8 @@ class VoiceVibe:
                     self._do_session(text, elapsed)
                 else:
                     self._do_insert(text, elapsed)
+                if thinking:
+                    self.airoot.show_transcript(text, "Done")
             except Exception:
                 if visible_job:
                     self.airoot.show_transcript("Please try again", "Couldn't transcribe")
@@ -898,7 +914,14 @@ class VoiceVibe:
         if self._do_launch(said, heard, elapsed):
             return
         if term.ai:
-            if len(said.split()) <= 4 and self._do_window_command(said, heard, elapsed):
+            # Commands still act ("press ctrl c", "down arrow", "close the
+            # terminal", "switch to Chrome"): the router only claims whole
+            # phrases it knows, so everything else is the CLI's prompt. A
+            # click / switch whose target isn't there ("focus on the parser
+            # and add tests") was a prompt after all, so it is typed.
+            route = self.router.route(said)
+            if route.handled and not _NOT_FOUND.match(str(route.speak or "")):
+                self._apply_route(route, said, heard, elapsed)
                 return
             self._do_insert(said, elapsed, session=True)
             return

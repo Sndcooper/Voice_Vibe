@@ -121,6 +121,45 @@ def _keys(combo: str) -> dict:
     return {"keys": combo}
 
 
+# Spoken key names -> the executor's names (inserter._MAIN_KEYS / _MODIFIER_KEYS).
+_SPOKEN_MODIFIERS = {"ctrl": "ctrl", "control": "ctrl", "shift": "shift", "alt": "alt",
+                     "win": "win", "windows": "win", "super": "win"}
+_SPOKEN_MAIN = {
+    "enter": "enter", "return": "enter", "escape": "esc", "esc": "esc", "tab": "tab",
+    "space": "space", "spacebar": "space", "backspace": "backspace", "delete": "delete",
+    "del": "delete", "home": "home", "end": "end", "insert": "insert",
+    "up": "up", "down": "down", "left": "left", "right": "right",
+    "page up": "page_up", "page down": "page_down",
+    **{f"f{n}": f"f{n}" for n in range(1, 13)},
+}
+_KEY_FILLER = re.compile(r"\b(?:the|key|keys|button|arrow|plus|and)\b")
+_TIMES = {"once": 1, "twice": 2, "two times": 2, "three times": 3, "thrice": 3,
+          "four times": 4, "five times": 5}
+
+
+def spoken_keys(spoken: str) -> str | None:
+    """ "control shift t" -> "ctrl+shift+t", "down arrow" -> "down"; None if not keys."""
+    text = " ".join(str(spoken).lower().replace("-", " ").split())
+    arrow = "arrow" in text.split()
+    text = " ".join(_KEY_FILLER.sub(" ", text).split())
+    if not text:
+        return None
+    words = text.split()
+    mods: list[str] = []
+    while words and words[0] in _SPOKEN_MODIFIERS:
+        mods.append(_SPOKEN_MODIFIERS[words.pop(0)])
+    rest = " ".join(words)
+    if rest in _SPOKEN_MAIN:
+        main = _SPOKEN_MAIN[rest]
+    elif len(rest) == 1 and rest.isalnum():
+        main = rest
+    else:
+        return None
+    if arrow and main not in ("up", "down", "left", "right"):
+        return None
+    return "+".join([*dict.fromkeys(mods), main])
+
+
 class Repeater:
     """Runs one spec over and over on its own thread until told to stop.
 
@@ -307,7 +346,8 @@ class Router:
             (_STOP.pattern, self._stop),
             # ------------------------------------------------------------ tabs
             (r"(?:open )?(?:a )?new tab", lambda m: _keys("ctrl+t")),
-            (r"close (?:the |this )?tab", lambda m: _keys("ctrl+w")),
+            (r"close (?:the |this )?(?:current )?tab(?: (?:on|in) (?:the )?[\w ]{1,20})?",
+             lambda m: _keys("ctrl+w")),
             (r"next tab", lambda m: _keys("ctrl+tab")),
             (r"(?:previous|prev) tab|back a tab", lambda m: _keys("ctrl+shift+tab")),
             (r"(?:go to |switch to )?(?:the )?last tab", lambda m: _keys("ctrl+9")),
@@ -333,6 +373,15 @@ class Router:
             # ----------------------------------------------- on-screen targets
             (r"show (?:the )?(?:numbers|hints)|number (?:everything|them)", self._show_numbers),
             (r"show (?:the )?links", self._show_links),
+            # Keys by name: "press ctrl c", "hit down arrow on my keyboard",
+            # "escape". Before click-by-name, which would read "press" as a
+            # click; the handler returns None unless the rest really is keys.
+            (r"(?:(?:press|hit|tap|push|type)(?: on)? )?(?P<keys>.+?)"
+             r"(?: (?P<times>once|twice|thrice|(?:two|three|four|five) times))?"
+             r"(?: (?:on|in) (?:my |the |this )?(?:keyboard|terminal|window|app|here))?",
+             self._press_keys),
+            (r"close (?:the |this )?(?:current )?(?:window|terminal|app|program)|close it",
+             lambda m: _keys("alt+f4")),
             (_HIDE.pattern, self._hide_numbers),
             (_NEXT.pattern, self._next_one),
             (r"(?P<verb>%s)(?: on)? (?:the )?(?P<target>.+)" % _VERB, self._click),
@@ -547,6 +596,18 @@ class Router:
         self._number(reading_order(found), "click")
         kind = "links" if types == LINKS else "numbers"
         return Route(handled=True, caption=f"{len(found)} {kind} - say click and a number")
+
+    def _press_keys(self, m: re.Match) -> Any:
+        """Keys by spoken name; None (not this rule) unless it parses as keys."""
+        combo = spoken_keys(m["keys"])
+        if combo is None:
+            return None
+        verb = m.group(0).split(" ", 1)[0].lower() in ("press", "hit", "tap", "push", "type")
+        # A bare letter or digit is only a key when it was said as one: "press y".
+        if not verb and "+" not in combo and len(combo) == 1:
+            return None
+        times = _TIMES.get((m["times"] or "once").lower(), 1)
+        return [_keys(combo)] * times
 
     def _show_links(self, m: re.Match) -> Route:
         return self._show_numbers(m, LINKS)
