@@ -26,9 +26,14 @@ if not exist "%PY%" (
 
 set "ARGS=%*"
 
+REM Login autostart, off unless asked: run.bat --autostart on, off or status
+if /I "%~1"=="--autostart" goto :autostart
+
 REM `shift` does not rewrite %*, so strip the flag from the string instead.
 if /I not "%~1"=="--console" goto :check_diagnostic
 set "ARGS=%ARGS:~9%"
+REM The hub starts hidden first if /health doesn't answer (it outlives this window).
+"%PY%" -m vvhub.ui.launcher hub
 "%PY%" -m voicevibe %ARGS%
 exit /b %errorlevel%
 
@@ -46,5 +51,12 @@ if not exist "%PYW%" (
     "%PY%" -m voicevibe %ARGS%
     exit /b %errorlevel%
 )
-start "" "%PYW%" -m voicevibe %ARGS%
+REM Hub first (only if /health doesn't answer), then Voice Vibe, both detached
+REM so they outlive this window. The old way if the launcher itself fails.
+"%PY%" -m vvhub.ui.launcher start %ARGS%
+if errorlevel 1 start "" "%PYW%" -m voicevibe %ARGS%
 exit /b 0
+
+:autostart
+"%PY%" -m vvhub.ui.launcher autostart %2
+exit /b %errorlevel%
