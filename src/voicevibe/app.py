@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import logging
 import queue
-import re
 import sys
 import threading
 import time
@@ -24,7 +23,7 @@ from .feedback import Beeper, Tray
 from .history import History, data_dir, is_save_command
 from .hub_client import HubClient
 from .hotkey import HotkeyListener, physically_down
-from .inserter import Inserter, focused_window
+from .inserter import Inserter, focused_window, is_session_typing
 from .intent import Responder
 from .launcher import Launcher
 from .overlay import Badges, Overlay
@@ -47,9 +46,6 @@ SESSION = "session"
 # Session sub-states when a wake phrase is configured.
 ARMED = "armed"  # listening, but only for the wake phrase
 DICTATING = "dictating"  # wake phrase heard, everything now goes to the cursor
-
-# "open notepad and type hello": after a launch, "type <text>" types the text.
-_TYPE_REQUEST = re.compile(r"^(?:please\s+)?type\s+(.+)$", re.IGNORECASE)
 
 
 class VoiceVibe:
@@ -720,6 +716,15 @@ class VoiceVibe:
                 log.info("(wake not confirmed, ignored) %s", text.strip())
                 self._arm("wake word not confirmed")
                 return
+        elif self._wake_state == DICTATING:
+            # "..., hey computer, press enter": addressed again while awake.
+            # Like waking, what follows the phrase is a request.
+            woke, remainder = self.wake_matcher.split(text)
+            if woke:
+                self._command_pending = True
+                text = remainder
+                if not text.strip():
+                    return
 
         self._last_activity = time.monotonic()
 
@@ -752,6 +757,10 @@ class VoiceVibe:
         command = self.router.split(text)
         if command is None and implicit and getattr(self.router, "enabled", False) and text.strip():
             command = text
+        if command is not None and is_session_typing(command):
+            # "type claude, press enter" is typing, not a request for the hub.
+            self._do_insert(command, elapsed, session=True)
+            return
         if command is not None:
             # Before the router: its "save" rule would press Ctrl+S.
             if is_save_command(command):
@@ -977,10 +986,6 @@ class VoiceVibe:
             self.voice.say("It didn't come to the front, so I stopped there.")
             return
         time.sleep(self.LAUNCH_SETTLE_SECONDS)
-        typed = _TYPE_REQUEST.match(rest)
-        if typed:
-            self._do_insert(typed.group(1), elapsed, session=True)
-            return
         self._do_command_or_insert(rest, elapsed, implicit=True, assistant=False)
 
     def _wait_for_new_window(self, before: int | None) -> bool:
@@ -994,8 +999,9 @@ class VoiceVibe:
 
     def _do_insert(self, text: str, elapsed: float, *, session: bool = False) -> None:
         target = focused_window() or "unknown window"
-        if session and self.config.control.get("format_lists", True):
-            inserted, fired = self.inserter.insert(text, format_lists=True)
+        if session:
+            inserted, fired = self.inserter.insert_session(
+                text, format_lists=bool(self.config.control.get("format_lists", True)))
         else:
             inserted, fired = self.inserter.insert(text)
         self._last_fired = fired

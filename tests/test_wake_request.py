@@ -143,6 +143,47 @@ class ImplicitRequestTests(unittest.TestCase):
         vv.responder.launcher.launch.assert_not_called()
         self.assertEqual(self.typed(vv), "")
 
+    # --- 2026-09-30 18:15: each of these was typed literally --------------
+    def enters(self, vv) -> int:  # noqa: ANN001
+        return sum(1 for kind, key in vv.inserter.keyboard.events
+                   if kind == "press" and getattr(key, "name", key) == "enter")
+
+    def test_type_and_press_enter(self) -> None:
+        vv = self.make()
+        self.said(vv, "Hey computer.", "Open terminal.", "Type Claude, press enter.")
+        self.assertEqual(self.typed(vv).strip(), "Claude")
+        self.assertEqual(self.enters(vv), 1)
+
+    def test_and_enter(self) -> None:
+        vv = self.make()
+        self.said(vv, "Hey computer, open terminal.", "Claude, and enter.")
+        self.assertEqual(self.typed(vv).strip(), "Claude")
+        self.assertEqual(self.enters(vv), 1)
+
+    def test_wake_phrase_again_while_awake(self) -> None:
+        vv = self.make()
+        self.said(vv, "Hey computer, open terminal.", "Press enter, hey computer, press enter.")
+        self.assertEqual(self.typed(vv), "")  # no "Press enter, hey computer" typed
+        self.assertEqual(self.enters(vv), 1)
+
+    def test_wake_again_starts_a_new_request(self) -> None:
+        vv = self.make()
+        self.said(vv, "Hey computer.", "Draft the notes.", "Hey computer, open terminal.")
+        vv.responder.launcher.launch.assert_called_once()
+
+    def test_open_then_type_and_submit(self) -> None:
+        vv = self.make()
+        self.said(vv, "Hey computer, open terminal and type git status, press enter.")
+        vv.responder.launcher.launch.assert_called_once()
+        self.assertEqual(self.typed(vv).strip().lower(), "git status")
+        self.assertEqual(self.enters(vv), 1)
+
+    def test_press_enter_mid_sentence_is_text(self) -> None:
+        vv = self.make()
+        self.said(vv, "Hey computer.", "Draft the notes.", "Press enter to continue the setup")
+        self.assertEqual(self.enters(vv), 0)
+        self.assertIn("continue the setup", self.typed(vv))
+
 
 class SplitThenTests(unittest.TestCase):
     def test_split(self) -> None:

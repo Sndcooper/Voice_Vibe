@@ -332,3 +332,77 @@ class Inserter:
                 except Exception as exc:
                     log.error("Could not send %r: %s", command["keys"], exc)
         return body, fired
+
+    def insert_session(self, text: str, *, format_lists: bool = False
+                       ) -> tuple[str, list[dict[str, str]]]:
+        """insert(), plus the voice-control words a Ctrl+Alt+W session allows.
+
+        "type claude, press enter" -> "Claude", Enter. "claude and enter",
+        "..., hit return" and several submits in one utterance work too; a
+        leading "type" is an instruction, not a word to type. Plain
+        dictation (insert) stays literal: there a sentence that merely
+        mentions "press enter" is typed.
+        """
+        steps, tail = session_steps(text)
+        if not steps:
+            return self.insert(strip_type(text) if self.cfg.get("voice_commands", True)
+                               else text, format_lists=format_lists)
+        inserted: list[str] = []
+        fired: list[dict[str, str]] = []
+        for body, said in steps:
+            body = strip_type(body)
+            if body:
+                out = self._finish(self._normalize(body), trailing_space=False)
+                self.insert_literal(out)
+                inserted.append(out)
+                time.sleep(float(self.cfg.get("command_delay", 0.12) or 0))
+            if self.press("enter"):
+                fired.append({"say": said, "keys": "enter", "ends_dictation": True})
+        if tail:
+            more, more_fired = self.insert(tail, format_lists=format_lists)
+            inserted.append(more)
+            fired.extend(more_fired)
+        return "".join(inserted), fired
+
+
+# Session only. A submit ends a clause: "press enter to continue" is text.
+_SUBMIT = re.compile(
+    r"(?<![\w'])(?:(?:(?:and\s+then|and|then)\s+)?(?:press|hit|push)\s+(?:the\s+)?"
+    r"(?:enter|return)(?:\s+key)?|(?:and\s+then|and|then)\s+(?:enter|return))"
+    r"(?=\s*(?:[,.;!?]|$))",
+    re.IGNORECASE,
+)
+_TYPE_WORD = re.compile(r"^\s*(?:please\s+)?type\s+(?=\S)", re.IGNORECASE)
+_SEPARATORS = " \t,;:.!?"
+
+
+def session_steps(text: str) -> tuple[list[tuple[str, str]], str]:
+    """([(text before a submit, the submit words), ...], text after the last)."""
+    steps: list[tuple[str, str]] = []
+    pos = 0
+    if not text.strip():
+        return steps, ""
+    for match in _SUBMIT.finditer(text):
+        steps.append((text[pos:match.start()].strip(_SEPARATORS), match.group(0)))
+        pos = match.end()
+    tail = text[pos:].strip(_SEPARATORS) if steps else text
+    return steps, tail
+
+
+def strip_type(text: str) -> str:
+    """ "type git status" -> "git status"; anything else unchanged."""
+    return _TYPE_WORD.sub("", text, count=1)
+
+
+def is_session_typing(text: str) -> bool:
+    """A voice-control utterance that is about typing, not a request.
+
+    "open terminal and type ls, press enter" is a launch first; its rest is
+    checked again once the terminal is in front.
+    """
+    if _TYPE_WORD.match(text):
+        return True
+    return bool(_SUBMIT.search(text)) and not _LAUNCH_VERB.match(text)
+
+
+_LAUNCH_VERB = re.compile(r"^\s*(?:please\s+)?(?:open|launch|start)\s", re.IGNORECASE)
