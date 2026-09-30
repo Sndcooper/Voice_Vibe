@@ -25,7 +25,7 @@ Voice Vibe turns your microphone into a system-wide input method. Click any text
 There are three separate modes:
 
 - **Ctrl+Alt+Space ? plain dictation:** tap to record, tap again to transcribe and paste. Basic punctuation and capitalization apply. App actions, wake matching, spoken edits, and list formatting do not run here. A separate **press enter** utterance sends Enter; `output.raw_dictation = true` makes it literal too.
-- **Ctrl+Alt+W ? voice control:** arm the session, say **hey computer** and then your request: `hey computer, open terminal`. The request right after the wake phrase needs no prefix; after that, start commands with **computer** (`computer scroll down`, `computer what's on my screen`) and ordinary utterances are typed. Say `press enter` separately to submit and re-arm.
+- **Ctrl+Alt+W ? voice control:** arm the session, say **hey computer** and then your request: `hey computer, open terminal`. The request right after the wake phrase needs no prefix; after that, start commands with **computer** (`computer scroll down`, `computer what's on my screen`) and ordinary utterances are typed. End with `press enter` to submit and re-arm: `type ls, press enter`, `claude and enter`; a leading `type` is not typed. Say `hey computer` again at any time for a new request.
 - **Ctrl+Alt+Shift+Space ? speech output:** record, transcribe, and read the transcript aloud using optional Soprano TTS.
 
 The checked-in config enables session control and assistant replies. A configuration built from code defaults keeps these opt-in. Session edits use `control.spoken_edits`; session list formatting uses `control.format_lists`. The old `output.spoken_edits` option no longer enables edits in plain dictation.
