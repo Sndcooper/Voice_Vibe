@@ -39,7 +39,7 @@ log = logging.getLogger(__name__)
 TIMEOUT = 12.0  # Gemini 3.x Flash thinks: ~4-7 s measured 2026-09-30; Voice Vibe waits 20 s in all
 LAYA_FLOOR = 0.35
 MODELS_TTL = 600.0
-REST_SECONDS = 600
+REST_SECONDS = 120
 MAX_TRIES = 3
 TOOLS = {"claude_code": "Claude Code (CLI in a terminal)", "claude_app": "the Claude desktop app",
          "codex_app": "the Codex app", "vscode_terminal": "the VS Code terminal (claude / codex / kiro CLI)",
@@ -60,7 +60,7 @@ Coding agents a prompt can go to (target ids): {tools}
 Return JSON only, no prose, with these keys:
 - "intent": one short sentence saying what the user wants, for the log and for spoken feedback.
 - "category": one of {categories}, or "" if this is plain dictation / not a task.
-- "action": one of the actions above that fits, or "".
+- "action": the action name alone (for example "prompt", not "code/prompt") that fits, or "".
 - "target": what it applies to: a coding agent id, an app or window name, a repo, a URL; else "".
 - "request": the user's request rewritten cleanly as they meant it (fix mishearings, drop filler and the
   wake word "computer"), same meaning, never adding or removing actions.
@@ -136,16 +136,24 @@ def _default_models() -> list[str]:
 
 
 _client: Any = None
+EXTRA = {"reasoning_effort": "none", "response_format": {"type": "json_object"}}
 
 
 def _default_complete(messages: list[dict], model: str = "auto", max_tokens: int = 800) -> Any:
-    """WS2's FreeLLMAPI client with no retries: a failing model is rested and the next one tried."""
+    """WS2's FreeLLMAPI client, no retries (a failing model is rested, the next one tried).
+
+    Asks for JSON and no thinking: Gemini 3.x Flash spent its whole token budget
+    thinking and took 7-14 s on a short request (2026-09-30); without thinking 3-4 s."""
     global _client
     from . import llm
 
     if _client is None:
         _client = llm.Client(retries=0, timeout=TIMEOUT)
-    return _client.complete(messages, model=model, max_tokens=max_tokens)
+    body = {"model": model, "messages": list(messages), "max_tokens": int(max_tokens), "stream": False, **EXTRA}
+    try:
+        return _client._post(body)  # noqa: SLF001 - complete() has no way to pass the extras
+    except TypeError:  # _post changed shape: plain completion
+        return _client.complete(messages, model=model, max_tokens=max_tokens)
 
 
 def _default_yes_no(state: Any, instruction: str) -> float:
@@ -182,6 +190,7 @@ class Broker:
         self.timeout = TIMEOUT
         self._models: tuple[float, list[str]] | None = None
         self._resting: dict[str, float] = {}
+        self._latency: dict[str, float] = {}  # seconds, moving average per model
 
     # ---- model --------------------------------------------------------------
     async def models(self) -> list[str]:
@@ -197,6 +206,9 @@ class Broker:
             self._models = (time.monotonic(), candidates(ids))
         now = time.monotonic()
         ready = [m for m in self._models[1] if self._resting.get(m, 0) <= now]
+        # Fastest model that has answered first (voice can't wait): 3.7 Flash took
+        # 9-12 s, 3 Flash preview 2-3 s on 2026-09-30; untried ones keep catalog order.
+        ready.sort(key=lambda m: self._latency.get(m, float("inf")))
         return (ready or list(self._models[1]))[:MAX_TRIES]
 
     async def model(self) -> str:
@@ -298,9 +310,14 @@ class Broker:
             if remaining < 1.0:
                 break
             try:
-                raw = await asyncio.wait_for(self.complete(messages, model=model, max_tokens=700), remaining)
+                began = time.monotonic()
+                raw = await asyncio.wait_for(self.complete(messages, model=model, max_tokens=1500), remaining)
+                took = time.monotonic() - began
+                old = self._latency.get(model)
+                self._latency[model] = took if old is None else 0.6 * old + 0.4 * took
                 break
             except asyncio.TimeoutError:
+                self._latency[model] = self.timeout  # too slow for voice: try others first next time
                 log.info("broker: %s timed out; old path", model)
                 return None
             except Exception as exc:  # noqa: BLE001 - 429 / removed model / upstream error: rest it, try the next
@@ -339,7 +356,9 @@ class Broker:
 
         category = data.get("category", "") if data.get("category", "") in CATEGORIES else ""
         known = {a for s in (getattr(hub, "skills", None) or {}).values() for a in getattr(s, "actions", {})}
-        action = data.get("action", "") if category and data.get("action", "") in known else ""
+        said_action = data.get("action", "")
+        said_action = said_action.rsplit("/", 1)[-1].strip() if isinstance(said_action, str) else ""
+        action = said_action if category and said_action in known else ""
         try:
             confidence = min(1.0, max(0.0, float(data.get("confidence", 0.0))))
         except (TypeError, ValueError):
@@ -357,9 +376,9 @@ class Broker:
         state = {"request": heard, "draft prompt for the coding agent": prompt}
         question = "Does the draft prompt ask the coding agent for the same thing as the request, adding no new tasks?"
         try:
-            score = float(await asyncio.wait_for(asyncio.to_thread(self.yes_no, state, question), 5.0))
+            score = float(await asyncio.wait_for(asyncio.to_thread(self.yes_no, state, question), 20.0))
         except Exception as exc:  # noqa: BLE001 - Laya can't check it: use the user's words
-            log.info("broker: Laya check failed (%s); drafted prompt dropped", exc)
+            log.info("broker: Laya check failed (%s); drafted prompt dropped", str(exc) or type(exc).__name__)
             return ""
         if score < LAYA_FLOOR:
             log.info("broker: Laya %.2f < %.2f on the drafted prompt; dropped", score, LAYA_FLOOR)

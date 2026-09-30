@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -178,6 +179,10 @@ class InterpretTests(unittest.TestCase):
         self.assertEqual((brief.category, brief.action), ("", ""))
         self.assertLessEqual(len(brief.target), 80)
 
+    def test_category_prefixed_action_accepted(self):
+        brief = run(make(FakeLLM(reply(action="code/prompt"))).interpret(hub(), "add tests", {}))
+        self.assertEqual(brief.action, "prompt")
+
 
 class ModelChoiceTests(unittest.TestCase):
     CATALOG = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-robotics-er-2-preview",
@@ -211,6 +216,23 @@ class ModelChoiceTests(unittest.TestCase):
         run(b.interpret(hub(), "add tests", {}))
         self.assertEqual(llm.calls[-1]["model"], "gemini-3.6-flash")  # 3.7 is resting
         self.assertEqual(len(llm.calls), 3)
+
+    def test_fastest_answering_model_goes_first(self):
+        class Timed(FakeLLM):
+            async def __call__(self, messages, model="auto", max_tokens=800):
+                self.calls.append({"model": model})
+                await asyncio.sleep(0.2 if model == "gemini-3.7-flash" else 0.0)
+                return reply()
+
+        llm = Timed()
+        b = make(llm, models=self.CATALOG)
+        run(b.interpret(hub(), "a", {}))
+        b._resting["gemini-3.7-flash"] = time.monotonic() + 60  # force one run on the next model
+        run(b.interpret(hub(), "b", {}))
+        b._resting.clear()
+        run(b.interpret(hub(), "c", {}))
+        self.assertEqual([c["model"] for c in llm.calls],
+                         ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.6-flash"])
 
 
 class SafetyTests(unittest.TestCase):
