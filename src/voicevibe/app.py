@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import queue
+import re
 import sys
 import threading
 import time
@@ -23,8 +24,12 @@ from .feedback import Beeper, Tray
 from .history import History, data_dir, is_save_command
 from .hub_client import HubClient
 from .hotkey import HotkeyListener, physically_down
-from .inserter import Inserter, focused_window, is_session_typing
-from .intent import Responder
+from .inserter import (Inserter, focused_window, is_session_typing, only_submit, session_steps,
+                       starts_with_type, strip_type)
+from .terminal import AI_CLIS, Terminal, plain_title
+from .terminal import detect as detect_terminal
+from .terminal import front as terminal_front
+from .intent import Reply, Responder
 from .launcher import Launcher
 from .overlay import Badges, Overlay
 from .polish import apply_edit, edit_applies, parse_edit
@@ -34,6 +39,8 @@ from .transcriber import Transcriber, choose_command_model
 from .uia import Finder
 from .vocab import Vocabulary, echoes_prompt
 from .winctl import foreground, front_process
+
+from vvhub.shell_words import shell_text, strip_submit
 from .wake import PhraseMatcher
 from .wakeword import WakeWordDetector, phrase_for
 
@@ -46,6 +53,13 @@ SESSION = "session"
 # Session sub-states when a wake phrase is configured.
 ARMED = "armed"  # listening, but only for the wake phrase
 DICTATING = "dictating"  # wake phrase heard, everything now goes to the cursor
+
+# In a plain shell these go to the window commands before the hub; anything
+# else there becomes a shell command.
+_WINDOW_VERBS = re.compile(
+    r"^(?:switch to|focus|bring up|minimi[sz]e|maximi[sz]e|restore|scroll|snap|lock|"
+    r"close (?:the |this )?window|next tab|previous tab|new tab|close (?:the |this )?tab|stop)\b",
+    re.IGNORECASE)
 
 
 class VoiceVibe:
@@ -70,6 +84,11 @@ class VoiceVibe:
     _command_pending = False
     # True while the worker handles an utterance (the watchdog waits for it).
     _job_running = False
+    # A shell request may include a spoken "Run del notes.txt?" approval.
+    SHELL_TIMEOUT = 30.0
+    # Terminal detection reads the real foreground window. On only in
+    # __init__, so partly built instances (tests) never look at the desktop.
+    _detect_terminals = False
     # "open terminal and <rest>": how long to wait for the app to come to the
     # front before <rest> is handled (never typed into the old window).
     LAUNCH_FOCUS_SECONDS = 6.0
@@ -77,6 +96,7 @@ class VoiceVibe:
 
     def __init__(self, config: Config) -> None:
         self.config = config
+        self._detect_terminals = True
         self.recorder = Recorder(
             sample_rate=int(config.audio["sample_rate"]),
             device=config.input_device,
@@ -792,10 +812,6 @@ class VoiceVibe:
         command = self.router.split(text)
         if command is None and implicit and getattr(self.router, "enabled", False) and text.strip():
             command = text
-        if command is not None and is_session_typing(command):
-            # "type claude, press enter" is typing, not a request for the hub.
-            self._do_insert(command, elapsed, session=True)
-            return
         if command is not None:
             # Before the router: its "save" rule would press Ctrl+S.
             if is_save_command(command):
@@ -815,17 +831,21 @@ class VoiceVibe:
                     self.voice.say(local.speak)
                 self.beeper.done()
                 return
+            term = self._front_terminal()
+            if term is not None:
+                self._do_terminal(command, text, elapsed, term)
+                return
+            if is_session_typing(command):
+                # "type claude, press enter" is typing, not a request for the hub.
+                self._do_insert(command, elapsed, session=True)
+                return
+            # A known app wins over the router: Explorer's "open <name>" rule
+            # would double-click something called "terminal" instead.
+            if assistant and self._do_launch(command, text, elapsed):
+                return
             route = self.router.route(command)
             if route.handled:
-                self._last_inserted = ""
-                log.info("[%.2fs] -> command | %s", elapsed, command.strip())
-                self.history.add(action="command", heard=text.strip(),
-                                 seconds=round(elapsed, 2))
-                self.overlay.show(route.caption or command.strip())
-                if route.speak:
-                    self.voice.say(route.speak)
-                self._ends_dictation = route.ends_dictation
-                self.beeper.done()
+                self._apply_route(route, command, text, elapsed)
                 return
             log.debug("Command not handled, dictating instead: %s", command.strip())
             if assistant and self._do_session_extra(command, text, elapsed):
@@ -833,6 +853,132 @@ class VoiceVibe:
             if self._do_hub(command, text, elapsed):
                 return
         self._do_insert(text, elapsed, session=True)
+
+    # ------------------------------------------------------------ terminals
+    def _ai_windows(self) -> dict[int, str]:
+        """hwnd -> AI CLI this app started there ("claude" after `claude`)."""
+        known = self.__dict__.get("_ai_started")
+        if known is None:
+            known = self.__dict__["_ai_started"] = {}
+        return known
+
+    def _front_terminal(self) -> Terminal | None:
+        if not self._detect_terminals:
+            return None
+        hwnd, title, process, pid = terminal_front()
+        if not hwnd:
+            return None
+        if plain_title(title):
+            self._ai_windows().pop(hwnd, None)  # the CLI has exited
+        return detect_terminal(hwnd, title, process, remembered=self._ai_windows().get(hwnd, ""),
+                               pid=pid)
+
+    def _note_ai_start(self, term: Terminal, command: str) -> None:
+        first = shell_text(strip_type(command)).split(" ", 1)[0].lower()
+        if first in AI_CLIS:
+            self._ai_windows()[term.hwnd] = first
+            log.info("%s is running in %r: speech goes to it as a prompt.", first, term.title[:40])
+
+    def _do_terminal(self, command: str, heard: str, elapsed: float, term: Terminal) -> None:
+        """A terminal is in front.
+
+        AI CLI running (Claude Code, Codex, Kiro...): what you say is its
+        prompt, typed ("..., press enter" submits). Plain shell: what you say
+        becomes a command -- the hub's terminal skill picks it with Laya from
+        tldr-pages ("list the files" -> dir) -- and the words themselves are
+        never typed; "type ..." still types exactly what follows.
+        """
+        said = command.strip()
+        if starts_with_type(said) or only_submit(said):
+            self._do_insert(said, elapsed, session=True)  # raw in a plain shell
+            steps, _tail = session_steps(said)
+            if steps and term.plain:
+                self._note_ai_start(term, steps[0][0])
+            return
+        if self._do_launch(said, heard, elapsed):
+            return
+        if term.ai:
+            if len(said.split()) <= 4 and self._do_window_command(said, heard, elapsed):
+                return
+            self._do_insert(said, elapsed, session=True)
+            return
+        if _WINDOW_VERBS.match(said) and self._do_window_command(said, heard, elapsed):
+            return
+        if self._do_shell(said, heard, elapsed, term):
+            return
+        if len(said.split()) <= 4 and self._do_window_command(said, heard, elapsed):
+            return
+        message = "I don't know a command for that. Say type, then the exact words."
+        log.info("[%.2fs] -> shell | no command for %r", elapsed, said[:80])
+        self.history.add(action="shell_none", heard=heard.strip(), spoken=message,
+                         seconds=round(elapsed, 2))
+        self.overlay.show(message)
+        self.voice.say(message)
+        self.beeper.empty()
+
+    def _do_shell(self, said: str, heard: str, elapsed: float, term: Terminal) -> bool:
+        """Ask the hub's terminal skill; True once handled (even on failure)."""
+        if self.hub is None or not self.hub.connected:
+            typed = shell_text(strip_submit(said))
+            self.inserter.insert_literal(typed)
+            log.info("[%.2fs] -> shell (hub off: typed, not run) | %s", elapsed, typed)
+            self.history.add(action="shell_typed", heard=heard.strip(), inserted=typed,
+                             seconds=round(elapsed, 2))
+            self.voice.say("The hub is off, so I only typed it. Say press enter to run it.")
+            self.beeper.done()
+            return True
+        context = {"terminal": {"shell": term.shell, "title": term.title[:120]},
+                   "window": {"title": term.title[:120], "process": term.process}}
+        reply = self.hub.request(said, context, timeout=self.SHELL_TIMEOUT)
+        if not reply:
+            log.info("Hub gave no answer in time for %r; nothing typed.", said[:80])
+            self.voice.say("That took too long. Say it again.")
+            self.beeper.error()
+            return True
+        if not reply.get("handled", True):
+            return False
+        data = reply.get("data") or {}
+        ran = str(data.get("command") or "")
+        speak = str(reply.get("text") or "")
+        log.info("[%.2fs] -> shell | %s | %s", elapsed, said[:80], ran or speak)
+        self.history.add(action="shell", heard=heard.strip(), command=ran, spoken=speak,
+                         ok=reply.get("ok"), seconds=round(elapsed, 2))
+        self.overlay.show(ran or speak)
+        if speak and reply.get("speak", True):
+            self.voice.say(speak)
+        if ran and data.get("ran"):
+            self._note_ai_start(term, ran)
+        self.beeper.done()
+        return True
+
+    def _do_window_command(self, said: str, heard: str, elapsed: float) -> bool:
+        route = self.router.route(said)
+        if not route.handled:
+            return False
+        self._apply_route(route, said, heard, elapsed)
+        return True
+
+    def _apply_route(self, route: object, command: str, heard: str, elapsed: float) -> None:
+        self._last_inserted = ""
+        log.info("[%.2fs] -> command | %s", elapsed, command.strip())
+        self.history.add(action="command", heard=heard.strip(), seconds=round(elapsed, 2))
+        self.overlay.show(route.caption or command.strip())
+        if route.speak:
+            self.voice.say(route.speak)
+        self._ends_dictation = route.ends_dictation
+        self.beeper.done()
+
+    def _do_launch(self, command: str, heard: str, elapsed: float) -> bool:
+        """ "open <app>" when <app> is a known app (before the router)."""
+        responder = getattr(self, "responder", None)
+        if responder is None or not hasattr(responder, "try_launch"):
+            return False
+        before = foreground()
+        reply = responder.try_launch(command)
+        if not isinstance(reply, Reply):
+            return False
+        self._apply_reply(reply, heard, elapsed, before)
+        return True
 
     def _do_hub(self, command: str, heard: str, elapsed: float) -> bool:
         """Last stop before typing: offer the command to vvhub.
@@ -999,6 +1145,11 @@ class VoiceVibe:
         reply = self.responder.respond(command)
         if not reply.handled:
             return False
+        self._apply_reply(reply, heard, elapsed, before)
+        return True
+
+    def _apply_reply(self, reply: object, heard: str, elapsed: float, before: int | None) -> None:
+        """Say / show an assistant reply; then the rest of "open X and ..."."""
         self.router.stop()
         self._last_inserted = ""
         self._ends_dictation = False
@@ -1011,7 +1162,6 @@ class VoiceVibe:
         self.beeper.done()
         if reply.follow:
             self._do_follow(before, reply.follow, elapsed)
-        return True
 
     def _do_follow(self, before: int | None, rest: str, elapsed: float) -> None:
         """The rest of "open terminal and <rest>", done in the app just opened.
@@ -1042,8 +1192,12 @@ class VoiceVibe:
     def _do_insert(self, text: str, elapsed: float, *, session: bool = False) -> None:
         target = focused_window() or "unknown window"
         if session:
+            # A plain shell gets exactly the words: no capital, no period.
+            front = self._front_terminal()
+            raw = front is not None and front.plain
             inserted, fired = self.inserter.insert_session(
-                text, format_lists=bool(self.config.control.get("format_lists", True)))
+                text, format_lists=bool(self.config.control.get("format_lists", True)) and not raw,
+                raw=raw)
         else:
             inserted, fired = self.inserter.insert(text)
         self._last_fired = fired

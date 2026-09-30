@@ -58,6 +58,8 @@ class Hub:
     # `factory(hub) -> obj with start()/shutdown()` (WS4's ReportScheduler).
     # None in tests, so no test ever polls GitHub or writes real reports.
     scheduler_factory: Any = None
+    # Load Laya in the background at start (build_hub only; tests leave it off).
+    warm_laya: bool = False
 
 
 def _authorized(hub: Hub, presented: str | None) -> bool:
@@ -78,6 +80,7 @@ def create_app(hub: Hub) -> FastAPI:
                 await asyncio.sleep(PURGE_INTERVAL)
 
         task = asyncio.create_task(purge_loop())
+        warm = asyncio.create_task(asyncio.to_thread(_warm_laya)) if hub.warm_laya else None
         scheduler = None
         if hub.scheduler_factory is not None:
             try:
@@ -91,6 +94,8 @@ def create_app(hub: Hub) -> FastAPI:
             yield
         finally:
             task.cancel()
+            if warm is not None:
+                warm.cancel()
             if scheduler is not None:
                 try:
                     scheduler.shutdown()
@@ -184,6 +189,7 @@ async def _answer(hub: Hub, msg: dict, send: Any) -> None:
         await send(protocol.reply_to(
             msg, "reply", text=result.text, speak=result.speak,
             handled=bool(result.data.get("handled", True)), ok=result.ok,
+            data={k: result.data[k] for k in ("command", "ran") if k in result.data},
         ))
     elif kind == "transcribe":
         # The bot sends voice notes here; Voice Vibe owns the Whisper model.
@@ -235,6 +241,16 @@ def _scheduler_factory() -> Any:
     return ReportScheduler
 
 
+def _warm_laya() -> None:
+    """Load Laya now, so the first "computer ..." does not wait for it."""
+    try:
+        from . import laya_engine
+
+        laya_engine.engine().warm()
+    except Exception as exc:  # noqa: BLE001 - requests will retry or fall back
+        log.warning("Laya warm-up failed: %s", exc)
+
+
 def build_hub(store_path: Path | None = None) -> Hub:
     return Hub(token=load_or_create_token(), store=Store(store_path or data_dir() / "hub.db"),
-               scheduler_factory=_scheduler_factory())
+               scheduler_factory=_scheduler_factory(), warm_laya=True)

@@ -24,6 +24,10 @@ from .schemas import Decision, Plan, Result, is_critical
 log = logging.getLogger(__name__)
 
 NOT_HANDLED = Result(ok=False, text="", speak=False, data={"handled": False})
+# Below this Laya confidence a routed request is "not a hub task" (typed as
+# heard), not "ask": the keyword tier caps confidence at 0.1, so without the
+# model the hub no longer guesses at free-form speech.
+NOT_A_TASK = 0.15
 
 
 def _optional(name: str) -> Any:
@@ -61,10 +65,19 @@ async def handle(hub: Any, text: str, context: dict | None = None,
 
 async def _decide_and_run(hub: Any, text: str, context: dict, conversation: str | None) -> Result:
     exact = match_phrase(hub.skills, text)
+    terminal = context.get("terminal") if isinstance(context.get("terminal"), dict) else {}
     if exact:
         skill, action = exact
         decision = Decision(category=skill.category, action=action, confidence=1.0,
                             reason="exact phrase")
+    elif terminal.get("shell") and not terminal.get("ai") and "terminal" in hub.skills:
+        # A plain shell is in front: the words become a shell command, chosen
+        # by the terminal skill (tldr-pages + Laya), never general routing.
+        skill = hub.skills["terminal"]
+        decision = Decision(category=skill.category, action="shell_command",
+                            target=str(terminal.get("shell")), confidence=1.0,
+                            reason=f"terminal: plain {terminal.get('shell')}")
+        context = {**context, "request": text}
     else:
         router = _optional("smart_router")
         if router is None:
@@ -73,6 +86,13 @@ async def _decide_and_run(hub: Any, text: str, context: dict, conversation: str 
         decision = await router.decide(hub, text, context)
         if decision is None:
             log.info("Not a hub task: %r", text[:120])
+            return NOT_HANDLED
+        if decision.confidence < NOT_A_TASK:
+            # A near-zero guess is not "ask the user": asking stole the next
+            # utterances as yes/no answers (2026-09-30 18:51, "Wow, type dir."
+            # -> screen.explain at 0.00). It is simply not a hub task.
+            log.info("Not a hub task (confidence %.2f < %.2f): %r", decision.confidence,
+                     NOT_A_TASK, text[:120])
             return NOT_HANDLED
         skill = _skill_for(hub.skills, decision)
         if skill is None:
@@ -83,6 +103,9 @@ async def _decide_and_run(hub: Any, text: str, context: dict, conversation: str 
 
     hub.store.add_decision(text, decision.to_dict(), conversation)
     plan: Plan = await skill.plan(decision, context)
+    if plan.args.get("noop") and not plan.critical:
+        # The skill found nothing to do (say so, or hand back); nothing to approve.
+        return await skill.run(plan, approval=None)
 
     needs = plan.critical or decision.critical or is_critical(plan.action)
     policy = _optional("policy")

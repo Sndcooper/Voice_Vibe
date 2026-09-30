@@ -173,6 +173,35 @@ class Responder:
         return Reply(action=DICTATE, text=text)
 
     # ---------------------------------------------------------------- handlers
+    def try_launch(self, text: str) -> Reply | None:
+        """"open <app>" when <app> resolves to an allowlisted app, else None.
+
+        Unlike respond(), an unknown name is not answered: the caller goes on
+        to the router (Explorer's "open <file>") or the hub. Asked before the
+        router, so "open terminal" in File Explorer launches Windows Terminal
+        instead of double-clicking something called terminal (2026-09-30).
+        """
+        if not (self.enabled and self.launch_enabled and self.launcher is not None):
+            return None
+        match = _LAUNCH.match(text.strip().rstrip(".!?,;: "))
+        if not match:
+            return None
+        target = match.group(1).strip()
+        words = target.lower().split()
+        if not words or (len(words) == 1 and words[0] in _NOT_AN_APP):
+            return None
+        entry, follow = self.launcher.resolve(target), ""
+        if entry is None:
+            first, _, rest = _split_then(target)
+            head = self.launcher.resolve(first) if rest and first else None
+            if head is None:
+                return None
+            entry, follow = head, rest
+        started = self.launcher.launch(entry)
+        message = f"Opening {entry.name}." if started else f"I couldn't start {entry.name}."
+        return Reply(action=LAUNCH if started else CONTROL, speak=message, caption=message,
+                     follow=follow if started else "")
+
     def _maybe_launch(self, target: str, original: str) -> Reply | None:
         """Launch `target` if it names a known app. None means "not a launch".
 

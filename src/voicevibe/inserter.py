@@ -333,7 +333,7 @@ class Inserter:
                     log.error("Could not send %r: %s", command["keys"], exc)
         return body, fired
 
-    def insert_session(self, text: str, *, format_lists: bool = False
+    def insert_session(self, text: str, *, format_lists: bool = False, raw: bool = False
                        ) -> tuple[str, list[dict[str, str]]]:
         """insert(), plus the voice-control words a Ctrl+Alt+W session allows.
 
@@ -341,9 +341,12 @@ class Inserter:
         "..., hit return" and several submits in one utterance work too; a
         leading "type" is an instruction, not a word to type. Plain
         dictation (insert) stays literal: there a sentence that merely
-        mentions "press enter" is typed.
+        mentions "press enter" is typed. `raw` (a shell in front): no
+        sentence polish -- "type git status" types exactly `git status`.
         """
         steps, tail = session_steps(text)
+        if raw:
+            return self._insert_raw(steps, tail if steps else text)
         if not steps:
             return self.insert(strip_type(text) if self.cfg.get("voice_commands", True)
                                else text, format_lists=format_lists)
@@ -362,6 +365,26 @@ class Inserter:
             more, more_fired = self.insert(tail, format_lists=format_lists)
             inserted.append(more)
             fired.extend(more_fired)
+        return "".join(inserted), fired
+
+    def _insert_raw(self, steps: list[tuple[str, str]], tail: str
+                    ) -> tuple[str, list[dict[str, str]]]:
+        from vvhub.shell_words import shell_text
+
+        inserted: list[str] = []
+        fired: list[dict[str, str]] = []
+        for body, said in steps:
+            out = shell_text(strip_type(body))
+            if out:
+                self.insert_literal(out)
+                inserted.append(out)
+                time.sleep(float(self.cfg.get("command_delay", 0.12) or 0))
+            if self.press("enter"):
+                fired.append({"say": said, "keys": "enter", "ends_dictation": True})
+        out = shell_text(strip_type(tail)) if tail else ""
+        if out:
+            self.insert_literal(out)
+            inserted.append(out)
         return "".join(inserted), fired
 
 
@@ -392,6 +415,17 @@ def session_steps(text: str) -> tuple[list[tuple[str, str]], str]:
 def strip_type(text: str) -> str:
     """ "type git status" -> "git status"; anything else unchanged."""
     return _TYPE_WORD.sub("", text, count=1)
+
+
+def starts_with_type(text: str) -> bool:
+    """ "type ..." : literal text to type, whatever window is in front."""
+    return bool(_TYPE_WORD.match(text))
+
+
+def only_submit(text: str) -> bool:
+    """Nothing but submit words: "press enter", "press enter, press enter"."""
+    steps, tail = session_steps(text)
+    return bool(steps) and not tail and all(not body.strip() for body, _ in steps)
 
 
 def is_session_typing(text: str) -> bool:
