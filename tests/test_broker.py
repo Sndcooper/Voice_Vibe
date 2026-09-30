@@ -78,10 +78,33 @@ def hub(store=None):
     return SimpleNamespace(skills=SKILLS, store=store or Store(":memory:"), bus=None)
 
 
-def make(llm, agree=0.9, models=("gemini-2.5-flash-lite", "gemini-2.5-flash", "llama-3.3-70b"), key="k"):
+def make(llm, agree=0.9, models=("gemini-2.5-flash-lite", "gemini-2.5-flash", "llama-3.3-70b"), key="k",
+         work=lambda: ""):
     b = broker.Broker(complete=llm, yes_no=lambda state, q: agree, list_models=lambda: list(models),
-                      key=lambda: key)
+                      key=lambda: key, work=work)
     return b
+
+
+class WorkContextTests(unittest.TestCase):
+    def test_work_context_sent_fenced(self):
+        llm = FakeLLM(reply())
+        work = 'Claude Code session "Parser refactor" in C:\\work\\parser\nagent: Next I will add tests.'
+        run(make(llm, work=lambda: work).interpret(hub(), "carry on with that", {}))
+        user = llm.calls[0]["messages"][1]["content"]
+        self.assertIn("Parser refactor", user)
+        self.assertIn("working on", user)
+        self.assertIn("source=coding sessions", user)
+
+    def test_no_work_context_on_private_screen_or_failure(self):
+        llm = FakeLLM(reply())
+        run(make(llm, work=lambda: "SECRET PROJECT").interpret(hub(), "x", {"redacted": True}))
+        self.assertNotIn("SECRET PROJECT", llm.calls[-1]["messages"][1]["content"])
+
+        def broken():
+            raise OSError("disk")
+
+        brief = run(make(llm, work=broken).interpret(hub(), "add tests", {}))
+        self.assertIsNotNone(brief)
 
 
 class InterpretTests(unittest.TestCase):

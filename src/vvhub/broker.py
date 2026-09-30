@@ -152,15 +152,23 @@ def _default_key() -> str | None:
     return default_key()
 
 
+def _default_work() -> str:
+    from . import worklog
+
+    return worklog.work_context() if worklog.enabled() else ""
+
+
 class Broker:
     def __init__(self, complete: Callable[..., Any] = _default_complete,
                  yes_no: Callable[[Any, str], float] = _default_yes_no,
                  list_models: Callable[[], list[str]] = _default_models,
-                 key: Callable[[], str | None] = _default_key) -> None:
+                 key: Callable[[], str | None] = _default_key,
+                 work: Callable[[], str] | None = _default_work) -> None:
         self.complete = complete
         self.yes_no = yes_no
         self.list_models = list_models
         self.key = key
+        self.work = work
         self.enabled = os.environ.get("VVHUB_BROKER", "1").strip() not in ("0", "false", "off")
         self.model_override = os.environ.get("VVHUB_BROKER_MODEL") or None
         self.timeout = TIMEOUT
@@ -235,11 +243,17 @@ class Broker:
 
         return fence("\n".join(parts), source="screen context", limit=5000)
 
-    def messages(self, hub: Any, heard: str, context: dict, conversation: str | None) -> list[dict]:
+    def messages(self, hub: Any, heard: str, context: dict, conversation: str | None,
+                 work: str = "") -> list[dict]:
         user = [f"Heard: {heard}"]
         recent = self._recent(hub, conversation, heard)
         if recent:
             user.append("Earlier in this conversation:\n" + "\n".join(recent))
+        if work:
+            from .browser.untrusted import fence
+
+            user.append("What the user is working on (their coding agents' sessions and git):\n"
+                        + fence(work, source="coding sessions", limit=4000))
         screen = self._context(context)
         if screen:
             user.append("Screen context:\n" + screen)
@@ -259,8 +273,10 @@ class Broker:
         started = time.monotonic()
         try:
             model = await self.model()
+            work = await self._work() if not (context or {}).get("redacted") else ""
             raw = await asyncio.wait_for(
-                self.complete(self.messages(hub, text, context or {}, conversation), model=model, max_tokens=700),
+                self.complete(self.messages(hub, text, context or {}, conversation, work), model=model,
+                              max_tokens=700),
                 self.timeout)
         except Exception as exc:  # noqa: BLE001 - pool exhausted / offline / timeout: old path
             log.info("broker skipped: %s", exc or type(exc).__name__)
@@ -276,6 +292,16 @@ class Broker:
                  text[:80], brief.category or "-", brief.action or "-", brief.target, brief.request[:80],
                  "yes" if brief.coder_prompt else "no")
         return brief
+
+    async def _work(self) -> str:
+        """Coding sessions + git (vvhub/worklog.py), time-limited; "" when off or slow."""
+        if self.work is None:
+            return ""
+        try:
+            return str(await asyncio.wait_for(asyncio.to_thread(self.work), 3.0) or "")
+        except Exception as exc:  # noqa: BLE001
+            log.info("broker: work context skipped (%s)", exc or type(exc).__name__)
+            return ""
 
     def _validate(self, hub: Any, heard: str, data: dict, model: str, elapsed_ms: int) -> Brief:
         def text_field(name: str) -> str:
