@@ -26,12 +26,24 @@ PORT = 53873
 LOGO_WIDTH = 132
 LOGO_HEIGHT = 92
 LOGO_TOP = 16
-# How much the logo grows at full voice level.
+# How much the dancing logo grows at full voice level. The static logo never grows.
 GROWTH = 0.36
-# Animation frames per second at full voice level (scaled by sqrt of level).
+# Dance frames per second at full voice. A soft voice still dances at 60 % of
+# this, so quiet talking never looks like slow motion.
 DANCE_SPEED = 36
+# Smoothed voice level (0..1) that starts the dance, and the level it must stay
+# under for QUIET_HOLD seconds before the logo settles back to the static mark.
+# The gap between the two keeps a pause between words from flickering it.
+TALK_ON = 0.08
+TALK_OFF = 0.04
+QUIET_HOLD = 0.35
+# Seconds to crossfade between the static logo and the dance.
+TALK_FADE = 0.15
 BASE = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent))
 SPRITESHEET = BASE / "airoot-spritesheet.png"
+# The original mark, shown while nobody talks: a 600x417 cell like the
+# spritesheet's, with the mark in the same box as frame 0.
+LOGO = BASE / "airoot-logo.png"
 ICON = BASE / "airoot-icon.ico"
 
 
@@ -91,22 +103,41 @@ def load_frames(width: int, height: int) -> list[QPixmap]:
     sheet = QPixmap(str(SPRITESHEET))
     if sheet.isNull() or sheet.width() != 6000 or sheet.height() != 2502:
         raise RuntimeError("Airoot animation spritesheet is missing or invalid")
+    return [
+        _prescale(sheet.copy((index % 10) * 600, (index // 10) * 417, 600, 417), width, height)
+        for index in range(60)
+    ]
+
+
+def load_static_logo(width: int, height: int) -> QPixmap | None:
+    """The original mark, pre-scaled exactly like a frame so the two crossfade
+    in place. None if the file is missing or not a transparent 600x417 cell."""
+    logo = QPixmap(str(LOGO))
+    if logo.isNull() or not logo.hasAlphaChannel() or (logo.width(), logo.height()) != (600, 417):
+        return None
+    return _prescale(logo, width, height)
+
+
+def _prescale(cell: QPixmap, width: int, height: int) -> QPixmap:
     # Render at the largest size the growth animation reaches, so scaling up
     # never happens; smaller sizes then come from a mild, clean reduction.
-    target_w = int(width * (1.0 + GROWTH))
-    target_h = int(height * (1.0 + GROWTH))
-    frames = []
-    for index in range(60):
-        cell = sheet.copy((index % 10) * 600, (index // 10) * 417, 600, 417)
-        frames.append(
-            cell.scaled(
-                target_w,
-                target_h,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-        )
-    return frames
+    return cell.scaled(
+        int(width * (1.0 + GROWTH)),
+        int(height * (1.0 + GROWTH)),
+        Qt.KeepAspectRatio,
+        Qt.SmoothTransformation,
+    )
+
+
+def logo_is_transparent(image: QImage) -> bool:
+    """A usable static logo: a 600x417 cell, clear corners, an opaque stroke."""
+    if image.isNull() or not image.hasAlphaChannel() or (image.width(), image.height()) != (600, 417):
+        return False
+    alpha = image.convertToFormat(QImage.Format_Alpha8)
+    data = bytes(alpha.constBits())[: alpha.sizeInBytes()]
+    line = alpha.bytesPerLine()
+    corners = (0, 599, 416 * line, 416 * line + 599)
+    return all(data[i] == 0 for i in corners) and max(data) == 255
 
 
 class ListeningOverlay(QWidget):
@@ -243,11 +274,18 @@ class ListeningOverlay(QWidget):
         self.level += (self.audio_peak - self.level) * 0.30
         self.update()
 
+    def current_logo(self) -> QPixmap:
+        """The image the listening state shows right now."""
+        return self.frames[self.frame_index]
+
+    def logo_scale(self) -> float:
+        return 1.0 + GROWTH * math.sqrt(max(0.0, self.level))
+
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        frame = self.frames[self.frame_index]
-        scale = 1.0 + GROWTH * math.sqrt(max(0.0, self.level))
+        frame = self.current_logo()
+        scale = self.logo_scale()
         width, height = LOGO_WIDTH * scale, LOGO_HEIGHT * scale
         # Grow about the centre so the logo does not drift as it reacts.
         bounds = QRectF(
@@ -299,13 +337,30 @@ class AirootOverlay(ListeningOverlay):
         self.last_tick = time.monotonic()
         self.dance_phase = 0.0
         self.morph_scale = 1.0
+        # Silence shows the original mark; talking crossfades to the dance.
+        logo = load_static_logo(LOGO_WIDTH, LOGO_HEIGHT)
+        self.static_logo = self.frames[0] if logo is None else logo
+        self.talking = False
+        self.quiet_since = None
+        # 0 = static logo, 1 = dance; eased when drawn.
+        self.talk_mix = 0.0
+        self.morph_mix = 0.0
         self.animation_timer.setInterval(16)
         self.commands_timer.setInterval(30)
+
+    def rest(self):
+        """Back to the still logo; the next voice starts the dance afresh."""
+        self.talking = False
+        self.quiet_since = None
+        self.talk_mix = 0.0
+        self.level = 0.0
 
     def show_listening(self):
         if self.mode == "dismiss" or self.completed:
             self.pending = "show"
             return
+        if self.mode != "listening":
+            self.rest()
         self.mode = "listening"
         self.completed = False
         self.pending = "hide"
@@ -322,7 +377,10 @@ class AirootOverlay(ListeningOverlay):
     def begin_transcribing(self):
         if self.mode in ("gather", "transcribing"):
             return
-        self.morph_scale = 1 + GROWTH * math.sqrt(max(0.0, self.level))
+        # Morph from exactly what is on screen: the static logo, the dance, or
+        # a crossfade between them, at its current size.
+        self.morph_scale = self.logo_scale()
+        self.morph_mix = self.logo_mix()
         self.stop_microphone()
         self.mode = "gather"
         self.entered = time.monotonic()
@@ -385,9 +443,9 @@ class AirootOverlay(ListeningOverlay):
         # Fast attack follows syllables; a softer release settles between words.
         tau = .045 if self.audio_peak > self.level else .12
         self.level += (self.audio_peak - self.level) * (1 - math.exp(-dt / tau))
-        if self.mode == "listening" and self.level > .015:
-            self.dance_phase += dt * DANCE_SPEED * math.sqrt(self.level)
-            self.frame_index = int(self.dance_phase) % len(self.frames)
+        # While listening, repaint only when the picture changes: the static
+        # logo shown in silence costs nothing to keep on screen.
+        changed = self.follow_voice(now, dt) if self.mode == "listening" else True
         if self.mode == "gather" and now - self.entered >= self.MORPH_SECONDS:
             self.mode = "transcribing"
             if self.completed:
@@ -402,11 +460,72 @@ class AirootOverlay(ListeningOverlay):
                 self.mode = "hidden"
                 self.completed = False
                 self.busy = False
+                self.rest()
                 self.hide()
                 if resume:
                     self.show_listening()
-        if self.isVisible():
+        if self.isVisible() and changed:
             self.update()
+
+    def follow_voice(self, now, dt):
+        """Static logo in silence, dance while talking. True if the look changed."""
+        if self.level >= TALK_ON:
+            if not self.talking and self.talk_mix == 0:
+                # Start from frame 0, which sits in the same box as the logo.
+                self.dance_phase = 0.0
+            self.talking = True
+            self.quiet_since = None
+        elif self.talking:
+            # Stop only after a real pause, never on a dip between syllables.
+            if self.level >= TALK_OFF:
+                self.quiet_since = None
+            elif self.quiet_since is None:
+                self.quiet_since = now
+            elif now - self.quiet_since >= QUIET_HOLD:
+                self.talking = False
+                self.quiet_since = None
+        before = self.talk_mix
+        step = dt / TALK_FADE
+        self.talk_mix = min(1.0, before + step) if self.talking else max(0.0, before - step)
+        if self.talk_mix == 0:
+            # One last repaint lands on the static logo; then none until speech.
+            return before != 0
+        # A steady pace: the voice only nudges the speed, so it never crawls.
+        self.dance_phase += dt * DANCE_SPEED * (0.6 + 0.4 * math.sqrt(max(0.0, self.level)))
+        self.frame_index = int(self.dance_phase) % len(self.frames)
+        return True
+
+    def logo_mix(self):
+        """How much of the dance shows: 0 = the static logo, 1 = the dance."""
+        return self.ease(self.talk_mix)
+
+    def logo_scale(self):
+        # Only the dance grows with the voice; the static logo stays put.
+        return 1.0 + GROWTH * math.sqrt(max(0.0, self.level)) * self.logo_mix()
+
+    def current_logo(self):
+        return self.compose_logo(self.logo_mix())
+
+    def compose_logo(self, mix):
+        """The static logo and the current dance frame, crossfaded by mix."""
+        frame = self.frames[self.frame_index]
+        if mix <= 0:
+            return self.static_logo
+        if mix >= 1:
+            return frame
+        blend = QPixmap(frame.size())
+        blend.fill(Qt.transparent)
+        p = QPainter(blend)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.setOpacity(1 - mix)
+        p.drawPixmap(0, 0, self.static_logo)
+        # Adding the weighted layers is a true crossfade: where the two strokes
+        # overlap the mark stays opaque instead of dipping halfway through.
+        p.setCompositionMode(QPainter.CompositionMode_Plus)
+        p.setOpacity(mix)
+        p.drawPixmap(0, 0, frame)
+        p.end()
+        return blend
 
     def paintEvent(self, event):
         if self.mode == "hidden":
@@ -427,7 +546,7 @@ class AirootOverlay(ListeningOverlay):
         p.setBrush(QColor(17, 18, 23, 225))
         p.drawRoundedRect(pill, 14, 14)
         if t < 1:
-            frame = self.frames[self.frame_index]
+            frame = self.compose_logo(self.morph_mix)
             scale = self.morph_scale * (1 - .75 * t)
             width, height = LOGO_WIDTH * scale, LOGO_HEIGHT * scale
             p.setOpacity(1 - t)
@@ -438,6 +557,25 @@ class AirootOverlay(ListeningOverlay):
         p.drawText(pill, Qt.AlignCenter, "Transcribing...")
         p.end()
 
+
+
+def self_test() -> int:
+    """Check the bundled images without opening a window; 0 means healthy.
+
+    Returns a code rather than raising: a windowed build would turn an
+    exception into a traceback dialog that blocks whoever ran the check.
+    """
+    sheet = QImage(str(SPRITESHEET))
+    if sheet.isNull() or sheet.width() != 6000 or sheet.height() != 2502:
+        print("Airoot overlay: animation spritesheet is missing or invalid", file=sys.stderr)
+        return 1
+    logo = QImage(str(LOGO))
+    if not logo_is_transparent(logo):
+        print("Airoot overlay: static logo is missing or not transparent", file=sys.stderr)
+        return 1
+    print(f"Airoot overlay: 60 transparent frames; static logo {logo.width()}x{logo.height()} "
+          f"with transparency; microphone library: {sd is not None}")
+    return 0
 
 
 def main() -> int:
@@ -451,10 +589,7 @@ def main() -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
-        image = QImage(str(SPRITESHEET))
-        assert not image.isNull() and image.size().width() == 6000 and image.size().height() == 2502
-        print(f"Airoot overlay: 60 transparent frames; microphone library: {sd is not None}")
-        return 0
+        return self_test()
 
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:

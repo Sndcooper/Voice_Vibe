@@ -6,6 +6,7 @@ a = Analysis(
     [str(assets / 'airoot_overlay.py')],
     pathex=[], binaries=[],
     datas=[(str(assets / 'airoot-spritesheet.png'), '.'),
+           (str(assets / 'airoot-logo.png'), '.'),
            (str(assets / 'airoot-icon.ico'), '.')],
     hiddenimports=[], hookspath=[], hooksconfig={}, runtime_hooks=[],
     excludes=[], noarchive=False, optimize=0,
