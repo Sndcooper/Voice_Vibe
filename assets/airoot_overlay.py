@@ -44,6 +44,9 @@ SPRITESHEET = BASE / "airoot-spritesheet.png"
 # The original mark, shown while nobody talks: a 600x417 cell like the
 # spritesheet's, with the mark in the same box as frame 0.
 LOGO = BASE / "airoot-logo.png"
+# The dance frame shown, still, while nobody talks: waves in the glowing
+# pink-red, same size as the flat logo it replaces (user, 2026-09-30).
+IDLE_FRAME = 0
 ICON = BASE / "airoot-icon.ico"
 
 
@@ -337,9 +340,11 @@ class AirootOverlay(ListeningOverlay):
         self.last_tick = time.monotonic()
         self.dance_phase = 0.0
         self.morph_scale = 1.0
-        # Silence shows the original mark; talking crossfades to the dance.
+        # Silence shows the first wave frame (the glowing pink-red mark), still
+        # and at rest size; talking dances on from that same picture. The flat
+        # red airoot-logo.png is only a fallback if the frames can't be used.
         logo = load_static_logo(LOGO_WIDTH, LOGO_HEIGHT)
-        self.static_logo = self.frames[0] if logo is None else logo
+        self.static_logo = self.frames[IDLE_FRAME] if self.frames else logo
         self.talking = False
         self.quiet_since = None
         # 0 = static logo, 1 = dance; eased when drawn.

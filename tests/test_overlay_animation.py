@@ -151,7 +151,13 @@ class TestOverlayAnimation(unittest.TestCase):
         self.assertIs(self.overlay.current_logo(), self.overlay.static_logo)
         self.assertEqual(self.overlay.logo_scale(), 1.0)
         self.assertEqual(self.grab(), self.rendered(self.overlay.static_logo))
-        self.assertNotEqual(self.grab(), self.rendered(self.overlay.frames[frame]))
+
+    def test_silence_shows_the_wave_frame_not_the_flat_logo(self):
+        m = self.module
+        self.assertIs(self.overlay.static_logo, self.overlay.frames[m.IDLE_FRAME])
+        flat = m.load_static_logo(m.LOGO_WIDTH, m.LOGO_HEIGHT)
+        self.assertEqual(self.overlay.static_logo.size(), flat.size())
+        self.assertNotEqual(self.overlay.static_logo.toImage(), flat.toImage())
 
     def test_talking_dances_at_a_steady_pace(self):
         m = self.module
