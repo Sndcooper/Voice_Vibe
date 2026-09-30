@@ -83,7 +83,11 @@ async def _decide_and_run(hub: Any, text: str, context: dict, conversation: str 
         if router is None:
             log.info("Not handled (no smart router): %r", text[:120])
             return NOT_HANDLED
-        decision = await router.decide(hub, text, context)
+        # Gemini Flash reads the request first (vvhub/broker.py); Laya still decides,
+        # on the cleaned words, and the approval floor stays on the user's own words.
+        brief = await _brief(hub, text, context, conversation)
+        decision = await router.decide(hub, brief.request if brief is not None and brief.request else text,
+                                       context)
         if decision is None:
             log.info("Not a hub task: %r", text[:120])
             return NOT_HANDLED
@@ -98,6 +102,12 @@ async def _decide_and_run(hub: Any, text: str, context: dict, conversation: str 
         if skill is None:
             log.info("No skill for %s/%s: %r", decision.category, decision.action, text[:120])
             return NOT_HANDLED
+        if brief is not None:
+            decision.laya_raw = {**(decision.laya_raw or {}), "broker": brief.to_dict(), "heard": text}
+            decision.reason = f"{decision.reason}; gemini: {brief.intent[:80]}".strip("; ")
+            floor_policy = _optional("policy")
+            if floor_policy is not None and floor_policy.preflight(text, decision, skill):
+                decision.needs_approval = True
     log.info("%r -> %s.%s target=%r confidence=%.2f (%s)", text[:120], skill.name,
              decision.action, decision.target, decision.confidence, decision.reason[:80])
 
@@ -133,6 +143,17 @@ async def _decide_and_run(hub: Any, text: str, context: dict, conversation: str 
         return Result(ok=False, text=f"{skill.name} failed: {exc}")
     log.info("%s.%s -> ok=%s %r", skill.name, plan.action, result.ok, result.text[:120])
     return result
+
+
+async def _brief(hub: Any, text: str, context: dict, conversation: str | None) -> Any:
+    broker = _optional("broker")
+    if broker is None:
+        return None
+    try:
+        return await broker.interpret(hub, text, context, conversation=conversation)
+    except Exception:  # noqa: BLE001 - the broker is an extra; never lose the request over it
+        log.exception("broker failed for %r", text[:120])
+        return None
 
 
 def _skill_for(skills: dict, decision: Decision) -> Any:

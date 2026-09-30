@@ -252,5 +252,12 @@ def _warm_laya() -> None:
 
 
 def build_hub(store_path: Path | None = None) -> Hub:
-    return Hub(token=load_or_create_token(), store=Store(store_path or data_dir() / "hub.db"),
-               scheduler_factory=_scheduler_factory(), warm_laya=True)
+    hub = Hub(token=load_or_create_token(), store=Store(store_path or data_dir() / "hub.db"),
+              scheduler_factory=_scheduler_factory(), warm_laya=True)
+    try:  # Gemini Flash interpreter over FreeLLMAPI (vvhub/broker.py); real hub only, never tests
+        from .broker import Broker
+
+        hub.broker = Broker()  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - the hub works without it
+        log.exception("Broker not loaded")
+    return hub

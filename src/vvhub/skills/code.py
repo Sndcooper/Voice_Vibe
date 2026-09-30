@@ -315,10 +315,16 @@ class CodeSkill(Skill):
         parsed = parse_request(request)
         target = str(getattr(decision, "target", "") or "")
         how = str((raw.get("target") or {}).get("how") or "")
+        # The broker (vvhub/broker.py, Gemini Flash) may have drafted a fuller prompt,
+        # already checked by Laya; a tool the user named still wins over its suggestion.
+        brokered = raw.get("broker") if isinstance(raw.get("broker"), dict) else {}
+        suggested = str(brokered.get("target") or "")
         tool = parsed.tool or (target if how == "named" and target in TOOLS else None) \
+            or (suggested if suggested in TOOLS else None) \
             or self.default_target(context or {}) or "claude_app"
         action = getattr(decision, "action", "") or "prompt"
-        prompt = parsed.prompt or ("Fix this" if action == "fix_this" else "")
+        prompt = str(brokered.get("coder_prompt") or "") or parsed.prompt \
+            or ("Fix this" if action == "fix_this" else "")
         preview = f"Send to {NAMES[tool]}: {prompt[:160]}" if prompt else f"Ask {NAMES[tool]}"
         return Plan(skill=self.name, action=action,
                     args={"tool": tool, "agent": parsed.agent, "prompt": prompt,
