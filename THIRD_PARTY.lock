@@ -93,3 +93,12 @@ license = "AGPL-3.0"
 role = "Reference only (AGPL + Docker/Redis) — never copy code"
 install = "reference only"
 dir = "firecrawl"
+
+[[repo]]
+name = "tldr"
+url = "https://github.com/tldr-pages/tldr"
+commit = "06abc2808b1def25f798ae5ad868bb8d8da4425b"
+license = "CC BY 4.0"
+role = "Shell command catalog for the terminal skill: Laya picks one of its examples for a spoken request"
+install = "sparse clone (pages/windows, pages/common) in ..\\Repos\\tldr; tools/build_shell_catalog.py writes src/vvhub/data/shell_catalog.json (110 everyday pages, attribution in its source block)"
+dir = "tldr"
