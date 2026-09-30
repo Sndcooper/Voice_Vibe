@@ -30,7 +30,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import os
 import struct
+import time
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -41,6 +43,13 @@ KEY_NAME = "freellmapi_key"
 TIMEOUT = 60.0
 RETRIES = 2
 BACKOFF = 1.0
+# model="auto" tries these in order (newest Gemini Flash first; the user
+# connected a Gemini key 2026-09-30), moving on when one is rate-limited or
+# overloaded (Google 503 "high demand"), then lets FreeLLMAPI pick. Override
+# with VVHUB_LLM_MODELS="a,b,c"; "auto" alone restores plain routing.
+PREFERRED = ("gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "auto")
+# A model that failed is skipped for this long before it is tried again.
+COOLDOWN = 60.0
 # Crops are ~800x500; this leaves room for a HiDPI crop, not a monitor.
 MAX_VISION_SIZE = (1400, 1000)
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
@@ -87,7 +96,7 @@ def png_size(data: bytes) -> tuple[int, int] | None:
 class Client:
     def __init__(self, base_url: str = BASE_URL, key: Callable[[], str | None] = default_key,
                  timeout: float = TIMEOUT, retries: int = RETRIES, backoff: float = BACKOFF,
-                 transport: Any = None) -> None:
+                 transport: Any = None, models: tuple[str, ...] | list[str] = ("auto",)) -> None:
         host = urlparse(base_url).hostname or ""
         if host not in _LOOPBACK:
             raise ValueError(f"FreeLLMAPI must be local, got {base_url!r}")
@@ -97,8 +106,11 @@ class Client:
         self.retries = max(0, int(retries))
         self.backoff = backoff
         self.transport = transport
+        self.models = list(models) or ["auto"]
+        self._cooling: dict[str, float] = {}
+        self.last_model = ""
 
-    async def _post(self, body: dict) -> str:
+    async def _post(self, body: dict, retries: int | None = None) -> str:
         import httpx
 
         key = self.key()
@@ -106,8 +118,9 @@ class Client:
             raise LLMUnavailable("no_key", "no FreeLLMAPI key in the keyring")
         headers = {"Authorization": f"Bearer {key}"}
         last: LLMUnavailable | None = None
+        tries = self.retries if retries is None else max(0, retries)
         async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as http:
-            for attempt in range(self.retries + 1):
+            for attempt in range(tries + 1):
                 if attempt and self.backoff:
                     await asyncio.sleep(self.backoff * attempt)
                 try:
@@ -168,8 +181,28 @@ class Client:
 
     async def complete(self, messages: list[dict], model: str = "auto",
                        max_tokens: int = 800) -> str:
-        return await self._post({"model": model, "messages": list(messages),
-                                 "max_tokens": int(max_tokens), "stream": False})
+        models = self.chain() if model == "auto" else [model]
+        last: LLMUnavailable | None = None
+        for name in models:
+            if name != models[-1] and self._cooling.get(name, 0.0) > time.monotonic():
+                continue
+            try:
+                text = await self._post({"model": name, "messages": list(messages),
+                                         "max_tokens": int(max_tokens), "stream": False},
+                                        retries=0 if name != models[-1] else None)
+                self.last_model = name
+                return text
+            except LLMUnavailable as exc:
+                if exc.kind not in ("exhausted", "unavailable", "rejected") or name == models[-1]:
+                    raise
+                log.info("%s unavailable (%s); trying the next model", name, exc.kind)
+                self._cooling[name] = time.monotonic() + COOLDOWN
+                last = exc
+        assert last is not None
+        raise last
+
+    def chain(self) -> list[str]:
+        return list(self.models)
 
     async def vision(self, prompt: str, png_bytes: bytes, system: str = "",
                      max_tokens: int = 500, model: str = "auto") -> str:
@@ -190,10 +223,15 @@ class Client:
 _client: Client | None = None
 
 
+def preferred_models() -> list[str]:
+    raw = os.environ.get("VVHUB_LLM_MODELS", "")
+    return [m.strip() for m in raw.split(",") if m.strip()] or list(PREFERRED)
+
+
 def client() -> Client:
     global _client
     if _client is None:
-        _client = Client()
+        _client = Client(models=preferred_models())
     return _client
 
 

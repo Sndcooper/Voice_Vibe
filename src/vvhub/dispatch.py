@@ -112,6 +112,7 @@ async def _decide_and_run(hub: Any, text: str, context: dict, conversation: str 
              decision.action, decision.target, decision.confidence, decision.reason[:80])
 
     hub.store.add_decision(text, decision.to_dict(), conversation)
+    context = {**context, "request": context.get("request") or text}
     plan: Plan = await skill.plan(decision, context)
     if plan.args.get("noop") and not plan.critical:
         # The skill found nothing to do (say so, or hand back); nothing to approve.

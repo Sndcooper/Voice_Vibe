@@ -461,6 +461,8 @@ def dangerous(command: str) -> str:
         return f"{first} {second} changes things outside this window"
     if first == "git" and second == "branch" and re.search(r"\s-[dD]\b|--delete", command):
         return "deletes a branch"
+    if first == "tar" and re.match(r"-?[a-z]*x", second):
+        return "extracting can overwrite files"
     if first == "git" and second in ("checkout", "switch") and " -- " in f" {command} ":
         return "discards changes"
     if re.search(r"(?<!>)>(?!>)", command):
@@ -602,6 +604,100 @@ def _host(command: str) -> str:
     return command
 
 
+# ------------------------------------------------------------ gemini
+PROPOSE_SYSTEM = (
+    "You turn one spoken request into ONE Windows {shell} command line. Reply with JSON only: "
+    '{{"command": "<one line>", "does": "<what it does, in plain words, one sentence>"}}. '
+    "Prefer built-in commands. If the request is not something a terminal command does "
+    '(small talk, a question, dictation), reply {{"command": "NONE", "does": ""}}.')
+LAYA_CHECK = ("Does the described command do what the user asked for? "
+              "Answer yes only if it matches the request.")
+CHECK_YES = 0.55     # Laya on (request, what Gemini says the command does)
+VERIFY_YES = 0.25    # Laya on (request, the tldr example's description)
+AUTO_YES = 0.75      # a read-only Gemini command runs without asking above this
+
+
+def _parse_proposal(text: str) -> tuple[str, str]:
+    """(command, does) from Gemini's JSON (tolerates ```json fences)."""
+    match = re.search(r"\{.*\}", text, re.S)
+    if not match:
+        return "", ""
+    try:
+        data = json.loads(match.group(0))
+    except ValueError:
+        return "", ""
+    command = str(data.get("command") or "").strip().strip("`")
+    return (command if "\n" not in command else ""), str(data.get("does") or "").strip()
+
+
+def verify(request: str, desc: str) -> float:
+    """Laya: does this described command match the request? (0..1)"""
+    try:
+        return float(laya_engine.yes_no({"request": request, "command does": desc}, LAYA_CHECK))
+    except laya_engine.LayaUnavailable:
+        return 0.0
+
+
+async def propose(request: str, shell: str, previous: Choice, llm=None) -> Choice:  # noqa: ANN001
+    """tldr had nothing sure: Gemini drafts one command, Laya checks it matches
+    the request, and it is always read out and asked before it runs."""
+    if llm is None:
+        from .. import llm as _llm
+
+        llm = _llm
+    name = "Command Prompt (cmd.exe)" if shell == "cmd" else "PowerShell"
+    try:
+        draft = await llm.complete([
+            {"role": "system", "content": PROPOSE_SYSTEM.format(shell=name)},
+            {"role": "user", "content": strip_submit(request)}], max_tokens=1000)
+    except Exception as exc:  # noqa: BLE001 - no LLM: keep tldr's "no command"
+        log.info("terminal: no Gemini proposal (%s)", getattr(exc, "kind", exc))
+        return previous
+    command, does = _parse_proposal(draft)
+    if not command or command.upper() == "NONE" or len(command) > 300:
+        return Choice(reason="gemini: not a command", scores=previous.scores)
+    # Rule 9: nothing Gemini proposes runs without Laya agreeing it matches.
+    yes = await asyncio.to_thread(verify, request, does or command) if does else 0.0
+    if yes < CHECK_YES:
+        log.info("terminal: Laya rejected Gemini's %r (%s) for %r (yes %.2f)", command, does,
+                 request, yes)
+        return Choice(reason=f"laya rejected the proposal (yes {yes:.2f})", scores=previous.scores)
+    why = dangerous(command)
+    command = for_shell(command, shell)
+    if re.search(r"\[[A-Z_ ]+\]|<[a-z_ -]+>|\{\{", command):
+        # "[SSID]", "<file>": Gemini left a blank. Typed for you to finish, never run.
+        return Choice(command=command, desc=does, confidence=yes, source="gemini", run=False,
+                      critical=False, reason="has a blank to fill")
+    # Laya acts as you only on small, read-only commands it is sure about;
+    # anything else Gemini wrote is read out and asked first (rule 10).
+    auto = not why and read_only(command) and yes >= AUTO_YES
+    return Choice(command=command, desc=does, confidence=yes, source="gemini", run=True,
+                  critical=not auto, reason=why or ("read-only" if auto else "proposed by Gemini"))
+
+
+_READ_ONLY_FIRST = frozenset("""dir tree type more find findstr where whoami hostname ipconfig ping
+    tracert nslookup netstat tasklist systeminfo echo ver getmac get-childitem get-content
+    get-process get-location select-string test-connection get-date measure-object""".split())
+_READ_ONLY_SUB = {"git": {"status", "log", "diff", "show", "branch", "remote", "tag", "blame"},
+                  "npm": {"list", "ls", "view", "outdated"}, "pip": {"list", "show", "freeze"},
+                  "netsh": {"wlan"}}
+
+
+def read_only(command: str) -> bool:
+    """A command that only looks: no redirect, no chaining into something else."""
+    if re.search(r"(?<![<>])>|\|\s*(?!findstr|find\b|more\b|sort\b|select-string)\w|&&|;", command,
+                 re.I):
+        return False
+    words = command.lower().split()
+    if not words:
+        return False
+    if words[0] in _READ_ONLY_FIRST:
+        return True
+    if words[0] in ("python", "node", "npm", "pip", "git") and words[1:2] == ["--version"]:
+        return True
+    return len(words) > 1 and words[1] in _READ_ONLY_SUB.get(words[0], ())
+
+
 # ------------------------------------------------------------------ skill
 class TerminalSkill(Skill):
     name = "terminal"
@@ -614,6 +710,20 @@ class TerminalSkill(Skill):
         raw = str((context.get("terminal") or {}).get("shell") or "cmd").lower()
         shell = "powershell" if raw in ("powershell", "pwsh") else "cmd"
         choice = await choose(request, shell)
+        if not choice.command and choice.reason != "empty":
+            choice = await propose(request, shell, choice)
+        elif choice.source == "catalog" and choice.desc:
+            # Laya re-reads the chosen example against the request; a doubtful
+            # pick ("zip the folder" -> tar xvf) asks Gemini for a better one.
+            fit = await asyncio.to_thread(verify, request, choice.desc)
+            if fit < VERIFY_YES:
+                better = await propose(request, shell, choice)
+                if better.command:
+                    choice = better
+                elif not read_only(choice.command):
+                    # Neither is sure: read it out and ask ("Run tar xvf reports?").
+                    log.info("terminal: doubtful %r (fit %.2f); asking first", choice.command, fit)
+                    choice.critical = True
         log.info("terminal %r -> %r (%s, %s, conf %.2f, run=%s, critical=%s)", request[:80],
                  choice.command, choice.source, choice.reason[:60], choice.confidence,
                  choice.run, choice.critical)
