@@ -65,6 +65,10 @@ class VoiceVibe:
     local_screen: LocalScreen | None = None
     # Link to vvhub (hub_client.py); None = hub features off, dictation as before.
     hub: HubClient | None = None
+    # After "hey computer", the next utterance is a request even without the
+    # "computer" prefix, if it comes within this many seconds.
+    IMPLICIT_COMMAND_SECONDS = 10.0
+    _command_until = 0.0
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -685,7 +689,8 @@ class VoiceVibe:
             self._last_activity = time.monotonic()
             self.beeper.wake()
             self._indicate("session")
-            log.info("Awake. Dictating.")
+            log.info("Awake. The next request needs no \"computer\"; after it, speech is typed.")
+            self._command_until = time.monotonic() + self.IMPLICIT_COMMAND_SECONDS
             # The wake phrase usually arrives in the same breath as the request,
             # so keep going with whatever followed it.
             text = remainder
@@ -699,6 +704,7 @@ class VoiceVibe:
             self._confirm_wake = False
             woke, remainder = self.wake_matcher.split(text)
             if woke:
+                self._command_until = time.monotonic() + self.IMPLICIT_COMMAND_SECONDS
                 text = remainder
                 if not text.strip():
                     return
@@ -714,17 +720,27 @@ class VoiceVibe:
             return
 
         self._ends_dictation = False
-        self._do_command_or_insert(text, elapsed)
+        self._do_command_or_insert(text, elapsed, implicit=self._take_implicit())
         if self._ends_dictation:
             self._arm("submitted")
 
-    def _do_command_or_insert(self, text: str, elapsed: float) -> None:
+    def _take_implicit(self) -> bool:
+        """True once: for the rest of the wake utterance, or the first
+        utterance within IMPLICIT_COMMAND_SECONDS of it. "Hey computer" then
+        "open terminal" is a request, as with any voice assistant."""
+        until, self._command_until = self._command_until, 0.0
+        return until > 0 and time.monotonic() <= until
+
+    def _do_command_or_insert(self, text: str, elapsed: float, implicit: bool = False) -> None:
         """Offer a prefixed utterance to the router; type everything else.
 
         An unhandled command is typed exactly as heard, prefix included, so
-        [control] never loses words the user meant as dictation.
+        [control] never loses words the user meant as dictation. `implicit`
+        (just after the wake phrase) makes the "computer" prefix optional.
         """
         command = self.router.split(text)
+        if command is None and implicit and getattr(self.router, "enabled", False) and text.strip():
+            command = text
         if command is not None:
             # Before the router: its "save" rule would press Ctrl+S.
             if is_save_command(command):
