@@ -232,6 +232,12 @@ enabled = true
 # which is never pruned.
 keep_days = 2
 
+# The automation hub (python -m vvhub serve). "computer <task>" commands that
+# nothing else handles are offered to it; if it is not running, they are typed
+# exactly as today.
+[hub]
+enabled = true
+
 # Replies. There is no language model here: answers are matched and extracted,
 # never generated, so this costs no extra memory and cannot invent an answer.
 [assistant]

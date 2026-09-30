@@ -19,6 +19,7 @@ from .context import ContextBuilder, LocalScreen, purge_crops
 from .control import Router
 from .feedback import Beeper, Tray
 from .history import History, data_dir, is_save_command
+from .hub_client import HubClient
 from .hotkey import HotkeyListener, physically_down
 from .inserter import Inserter, focused_window
 from .intent import Responder
@@ -60,6 +61,8 @@ class VoiceVibe:
     command_transcriber: Transcriber | None = None
     # Screen context + local screen phrases; None in a partly built instance.
     local_screen: LocalScreen | None = None
+    # Link to vvhub (hub_client.py); None = hub features off, dictation as before.
+    hub: HubClient | None = None
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -137,6 +140,15 @@ class VoiceVibe:
                              finder=Finder(), badges=self.badges, profiles=config.profiles)
         # "read the answer" and profile replies speak through the SAPI voice.
         self.executor.say = self.voice.say
+        if bool(config.hub.get("enabled", True)):
+            self.hub = HubClient({
+                # A hub approval is a spoken yes/no, only while a session can hear it.
+                "confirm": lambda prompt, timeout: (
+                    self.session.is_recording and self.confirmer(prompt, timeout)),
+                "get_context": lambda deep: self.context.bundle(deep=deep),
+                "run_steps": lambda steps, dry_run: (
+                    None if dry_run else self.executor.run(steps, command="hub")),
+            })
         self.history = History(
             enabled=bool(config.history.get("enabled", True)),
             keep_days=int(config.history.get("keep_days", 2)),
@@ -742,7 +754,39 @@ class VoiceVibe:
             log.debug("Command not handled, dictating instead: %s", command.strip())
             if self._do_session_extra(command, text, elapsed):
                 return
+            if self._do_hub(command, text, elapsed):
+                return
         self._do_insert(text, elapsed, session=True)
+
+    def _do_hub(self, command: str, heard: str, elapsed: float) -> bool:
+        """Last stop before typing: offer the command to vvhub.
+
+        False (so the text is typed as heard) when the hub is off, down, slow,
+        or says it is not a hub task (rule 8).
+        """
+        if self.hub is None or not self.hub.connected:
+            return False
+        try:
+            context = self.context.bundle()
+        except Exception as exc:  # noqa: BLE001 - context is best effort
+            log.debug("context bundle failed: %s", exc)
+            context = {}
+        reply = self.hub.request(command.strip(), context)
+        if not reply or not reply.get("handled", True):
+            return False
+        self.router.stop()
+        self._last_inserted = ""
+        speak = str(reply.get("text") or "")
+        log.info("[%.2fs] -> hub | %s | %s", elapsed, command.strip(), speak)
+        self.history.add(action="hub", heard=heard.strip(), spoken=speak, ok=reply.get("ok"),
+                         seconds=round(elapsed, 2))
+        if speak:
+            self.overlay.show(speak)
+            self.airoot.show_transcript(speak, "Reply")
+            if reply.get("speak", True):
+                self.voice.say(speak)
+        self.beeper.done()
+        return True
 
     def _save_conversation(self, heard: str, elapsed: float) -> None:
         """Keep the last two days of turns forever (history/saved/)."""
@@ -948,6 +992,8 @@ class VoiceVibe:
 
         self.overlay.start()
         self.airoot.start()
+        if self.hub is not None:
+            self.hub.start()
         threading.Thread(target=self._warm_context, name="context", daemon=True).start()
         threading.Thread(target=self._worker, name="worker", daemon=True).start()
         threading.Thread(target=self._watchdog, name="watchdog", daemon=True).start()
@@ -997,6 +1043,8 @@ class VoiceVibe:
         if self.local_screen is not None:
             self.context.pin.stop()
         self.airoot.stop()
+        if self.hub is not None:
+            self.hub.stop()
         self.hotkeys.stop()
         self.router.stop()
         if self.detector is not None:

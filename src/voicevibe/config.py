@@ -112,6 +112,10 @@ DEFAULTS: dict[str, Any] = {
         "enabled": True,
         "keep_days": 2,
     },
+    # vvhub link (hub_client.py). Harmless when the hub is not running.
+    "hub": {
+        "enabled": True,
+    },
     "assistant": {
         "enabled": False,
         "launch_apps": True,
@@ -175,6 +179,7 @@ class Config:
     feedback: dict[str, Any] = field(default_factory=dict)
     overlay: dict[str, Any] = field(default_factory=dict)
     history: dict[str, Any] = field(default_factory=dict)
+    hub: dict[str, Any] = field(default_factory=lambda: {"enabled": True})
     assistant: dict[str, Any] = field(default_factory=dict)
     control: dict[str, Any] = field(default_factory=dict)
     vocab: dict[str, Any] = field(default_factory=dict)
@@ -305,6 +310,7 @@ def load_config(explicit: str | Path | None = None) -> Config:
         feedback=merged["feedback"],
         overlay=merged["overlay"],
         history=merged["history"],
+        hub=merged["hub"],
         assistant=merged["assistant"],
         control=merged["control"],
         vocab=merged["vocab"],
