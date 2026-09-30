@@ -176,7 +176,7 @@ class HubClient:
         try:
             reply = future.result(wait + 1)
         except (concurrent.futures.TimeoutError, Exception) as exc:  # noqa: BLE001
-            log.debug("Hub request failed: %s", exc)
+            log.info("Hub request failed: %s", exc or exc.__class__.__name__)
             future.cancel()
             return None
         if not reply or reply.get("type") != "reply":

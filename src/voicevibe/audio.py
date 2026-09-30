@@ -194,6 +194,12 @@ class SegmentRecorder:
         with self._lock:
             return self._in_speech and self._utterance == utterance
 
+    @property
+    def in_speech(self) -> bool:
+        """Someone is talking: an utterance has started and not yet ended."""
+        with self._lock:
+            return self._in_speech
+
     def _take_locked(self) -> np.ndarray | None:
         """Close off the current utterance and return it. Caller holds the lock."""
         chunks, self._speech = self._speech, []

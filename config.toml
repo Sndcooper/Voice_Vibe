@@ -169,7 +169,8 @@ bias_prompt = true
 sleep_phrases = ["never mind", "nevermind", "go to sleep", "cancel that"]
 # Go back to waiting after this many seconds of silence while dictating.
 # Stops a forgotten session from typing out a conversation. 0 disables.
-active_timeout = 20.0
+# Time spent talking never counts as silence.
+active_timeout = 40.0
 # Print what was heard while waiting, so you can spot mishearings and add aliases.
 log_ignored = true
 # What listens for the wake word.
@@ -294,6 +295,12 @@ spoken_edits = true
 # Format enumerations in session dictation.
 format_lists = true
 prefixes = ["computer"]
+# "control": after "hey computer" everything you say is a request ("computer"
+# optional; "type ..." types text, "... press enter" submits), and Enter does
+# not end the session -- 40 s of silence or "never mind" does. "dictation":
+# only the first request after the wake phrase skips the prefix, other speech
+# is typed, and Enter ends the session.
+session_mode = "control"
 # Wheel notches for a plain "scroll down". Each notch is ~3 lines.
 scroll_amount = 5
 # "keep scrolling" stops by itself after this many seconds.
@@ -344,6 +351,9 @@ no_words = ["no", "cancel", "stop", "never mind"]
 # on very low-RAM machines -- the built-in orb above shows the same state.
 [airoot]
 enabled = true
+# Show the logo whenever a session's mic is open, also while it waits for
+# "hey computer" (false: only after the wake phrase).
+show_while_armed = true
 exe = "C:/Users/vilas/Documents/Codex/2026-09-23/make/outputs/AirootVoiceOverlay.exe"
 # Must match the port compiled into the overlay.
 port = 53873
@@ -358,7 +368,7 @@ quit_on_exit = true
 # Names and jargon it would otherwise spell by sound. Passed to faster-whisper
 # as hotwords; costs nothing at runtime.
 # The tools you talk to: "run Claude" was heard as "surround the cloud".
-hotwords = ["Claude", "Codex", "Kiro", "Notion", "LinkedIn", "GitHub", "terminal"]
+hotwords = ["Claude", "Codex", "Kiro", "Gemini", "Notion", "LinkedIn", "GitHub", "terminal"]
 # Add a short hint in the style of the front app to the decoder prompt: code
 # words in editors and terminals, plain prose in Claude / ChatGPT. Not used
 # while a session waits for its wake word.

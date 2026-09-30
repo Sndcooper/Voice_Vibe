@@ -68,6 +68,8 @@ class VoiceVibe:
     # After "hey computer", the next utterance is a request even without the
     # "computer" prefix; re-arming cancels it.
     _command_pending = False
+    # True while the worker handles an utterance (the watchdog waits for it).
+    _job_running = False
     # "open terminal and <rest>": how long to wait for the app to come to the
     # front before <rest> is handled (never typed into the old window).
     LAUNCH_FOCUS_SECONDS = 6.0
@@ -217,13 +219,17 @@ class VoiceVibe:
         Derived from the session state rather than the indicator string: a
         dictating session flips through "busy" on every utterance while the mic
         stays open, and keying off the string would flash the overlay each time.
-        An armed session is waiting for the wake word, not listening to you.
+        An armed session is waiting for the wake word, not listening to you;
+        [airoot].show_while_armed shows the logo then too, since the mic is open.
         """
         if state == "recording":
             return True
-        return self.session.is_recording and (
-            not self.wake_enabled or self._wake_state == DICTATING
-        )
+        if not self.session.is_recording:
+            return False
+        if not self.wake_enabled or self._wake_state == DICTATING:
+            return True
+        airoot = getattr(self.config, "airoot", None) or {}
+        return bool(airoot.get("show_while_armed", False))
 
     # -------------------------------------------------------------- recording
     def _choose_microphone(self) -> None:
@@ -522,13 +528,23 @@ class VoiceVibe:
         including other people talking, gets typed into whatever has focus.
         """
         while not self._stop.wait(0.5):
-            timeout = float(self.config.wake.get("active_timeout", 20.0) or 0)
-            if timeout <= 0 or not self.wake_enabled:
-                continue
-            if not self.session.is_recording or self._wake_state != DICTATING:
-                continue
-            if time.monotonic() - self._last_activity >= timeout:
-                self._arm(f"silent for {timeout:g}s")
+            self._watchdog_check()
+
+    def _watchdog_check(self) -> None:
+        timeout = float(self.config.wake.get("active_timeout", 20.0) or 0)
+        if timeout <= 0 or not self.wake_enabled:
+            return
+        if not self.session.is_recording or self._wake_state != DICTATING:
+            return
+        # Talking, or an utterance still waiting to be handled, is not
+        # silence: a long request must never re-arm the session halfway
+        # (2026-09-30 17:57 it re-armed 20 s into one, which was then ignored).
+        if (getattr(self.session, "in_speech", False) or self._job_running
+                or not self._jobs.empty()):
+            self._last_activity = time.monotonic()
+            return
+        if time.monotonic() - self._last_activity >= timeout:
+            self._arm(f"silent for {timeout:g}s")
 
     # ---------------------------------------------------------------- hotkeys
     def toggle(self, action: str) -> None:
@@ -577,6 +593,7 @@ class VoiceVibe:
                           len(audio) / int(self.config.audio["sample_rate"]))
                 continue
             try:
+                self._job_running = True
                 if visible_job:
                     self._indicate("busy")
                 armed = not visible_job
@@ -603,6 +620,7 @@ class VoiceVibe:
                 log.exception("Job failed")
                 self.beeper.error()
             finally:
+                self._job_running = False
                 # Don't blank the indicator while the mic is still open.
                 self._indicate(self._session_tray())
 
@@ -693,7 +711,8 @@ class VoiceVibe:
             self._last_activity = time.monotonic()
             self.beeper.wake()
             self._indicate("session")
-            log.info("Awake. The next request needs no \"computer\"; after it, speech is typed.")
+            log.info("Awake. %s", "Say what to do; \"type ...\" types text." if self._control_mode()
+                     else "The next request needs no \"computer\"; after it, speech is typed.")
             self._command_pending = True
             # The wake phrase usually arrives in the same breath as the request,
             # so keep going with whatever followed it.
@@ -733,9 +752,19 @@ class VoiceVibe:
             return
 
         self._ends_dictation = False
-        self._do_command_or_insert(text, elapsed, implicit=self._take_implicit())
-        if self._ends_dictation:
+        # Evaluated first so the one-shot flag is always consumed.
+        implicit = self._take_implicit()
+        implicit = self._control_mode() or implicit
+        self._do_command_or_insert(text, elapsed, implicit=implicit)
+        if self._ends_dictation and not self._control_mode():
             self._arm("submitted")
+
+    def _control_mode(self) -> bool:
+        """[control].session_mode = "control": while awake, everything said is
+        a request ("computer" optional; "type ..." types), and Enter does not
+        end the session -- silence (active_timeout) or a sleep phrase does."""
+        control = getattr(getattr(self, "config", None), "control", None) or {}
+        return str(control.get("session_mode", "dictation")).lower() == "control"
 
     def _take_implicit(self) -> bool:
         """True once: for the rest of the wake utterance, or the next
@@ -805,7 +834,10 @@ class VoiceVibe:
         False (so the text is typed as heard) when the hub is off, down, slow,
         or says it is not a hub task (rule 8).
         """
-        if self.hub is None or not self.hub.connected:
+        if self.hub is None:
+            return False
+        if not self.hub.connected:
+            log.info("Hub not connected; typing instead: %s", command.strip()[:80])
             return False
         try:
             context = self.context.bundle()
@@ -813,7 +845,11 @@ class VoiceVibe:
             log.debug("context bundle failed: %s", exc)
             context = {}
         reply = self.hub.request(command.strip(), context)
-        if not reply or not reply.get("handled", True):
+        if not reply:
+            log.info("Hub gave no answer in time; typing instead: %s", command.strip()[:80])
+            return False
+        if not reply.get("handled", True):
+            log.info("Hub: not a hub task; typing: %s", command.strip()[:80])
             return False
         self.router.stop()
         self._last_inserted = ""

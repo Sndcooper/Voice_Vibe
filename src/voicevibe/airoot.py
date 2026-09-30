@@ -95,8 +95,18 @@ class AirootBridge:
             self._send("quit")
 
     def show_transcript(self, text: str, label: str = "Recognized") -> None:
-        """Send recognized text as Unicode without changing the recording state."""
-        if self.enabled:
+        """Tell the overlay a transcription finished (it never shows the text).
+
+        Dropped while the logo is up and listening: the overlay treats any
+        transcript as "done", fades the logo out, and set_state() never
+        re-sends "show" for a state it thinks is unchanged -- so a reply to
+        "hey computer, open terminal" left the session with no logo.
+        """
+        if not self.enabled:
+            return
+        with self._lock:
+            listening = self._state == "listening"
+        if not listening:
             self._send(json.dumps({"event": "transcript", "text": text[:4000],
                                    "label": label}, ensure_ascii=False))
 
