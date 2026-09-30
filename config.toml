@@ -58,10 +58,9 @@ log_prob_threshold = -1.0
 # Re-decode, warmer, only when a decode loops or is unsure (faster-whisper's
 # compression-ratio and log-prob checks). Clean decodes stay deterministic.
 temperature_fallback = true
-# Drop a segment of at most unsure_max_words words decoded below
-# unsure_logprob: real speech sits near -0.2, silence phantoms below -0.4.
+# Drop a known Whisper phantom ("Thank you.", "Thanks for watching!") when it
+# is decoded below unsure_logprob. Other short speech is always kept.
 drop_unsure_short = true
-unsure_max_words = 5
 unsure_logprob = -0.8
 # Bias the decoder toward your vocabulary. Keep it short.
 initial_prompt = ""

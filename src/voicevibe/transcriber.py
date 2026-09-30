@@ -20,6 +20,22 @@ log = logging.getLogger(__name__)
 # [model].temperature_fallback: retried warmer only when a decode loops or is
 # unsure, so a clean decode stays deterministic (the first entry is 0).
 FALLBACK_TEMPERATURES = (0.0, 0.2, 0.4, 0.6)
+
+# What Whisper writes on silence or noise (subtitle credits from its training
+# data). Dropped only when also decoded unsure; never a wake phrase or command.
+PHANTOMS = frozenset({
+    "thank you", "thank you very much", "thank you so much", "thanks",
+    "thanks for watching", "thank you for watching", "thanks for listening",
+    "you", "bye", "bye bye", "i'll see you next time", "see you next time",
+    "i'll see you later", "okay i'll see you later", "see you later",
+    "please subscribe", "like and subscribe", "yeah yeah yeah",
+    "subtitles by the amara org community",
+})
+
+
+def _normal(text: str) -> str:
+    kept = "".join(c if c.isalnum() or c in " '" else " " for c in text.lower())
+    return " ".join(kept.split())
 MODEL_ALIASES = {
     "large-v3-turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
     "turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
@@ -302,14 +318,16 @@ class Transcriber:
         return "".join(kept).strip()
 
     def _unsure_short(self, segment: object) -> bool:
-        """[model].drop_unsure_short: a few words the decoder was unsure of.
+        """[model].drop_unsure_short: a known Whisper phantom, decoded unsure.
 
-        Measured 2026-09-29: real speech decodes at avg_logprob -0.18 to -0.23,
-        silence phantoms ("Thank you.", "Yeah, yeah") at -0.4 to -1.8.
+        Only phrases Whisper invents on silence and noise ("Thank you.",
+        "Thanks for watching!") are dropped. Real short speech from this mic
+        can decode as low as -1.1 too ("ok computer", "Press Enter." were lost
+        on 2026-09-30 when any short unsure segment was dropped), so a low
+        score alone is never enough.
         """
         if not self.cfg.get("drop_unsure_short", False):
             return False
-        words = len(str(getattr(segment, "text", "")).split())
+        said = _normal(str(getattr(segment, "text", "")))
         logprob = float(getattr(segment, "avg_logprob", 0.0))
-        return (words <= int(self.cfg.get("unsure_max_words", 5))
-                and logprob < float(self.cfg.get("unsure_logprob", -0.8)))
+        return said in PHANTOMS and logprob < float(self.cfg.get("unsure_logprob", -0.8))

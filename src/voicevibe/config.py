@@ -58,7 +58,6 @@ DEFAULTS: dict[str, Any] = {
         # Opt-in hallucination guards (config.toml turns them on).
         "temperature_fallback": False,
         "drop_unsure_short": False,
-        "unsure_max_words": 5,
         "unsure_logprob": -0.8,
         "log_prob_threshold": -1.0,
         "initial_prompt": "",

@@ -58,6 +58,18 @@ class TranscriptionGuardTests(unittest.TestCase):
         self.assertIn("Yes.", text)
         self.assertIn("longer sentence", text)
 
+    def test_real_short_speech_kept_even_when_unsure(self) -> None:
+        # 2026-09-30: these were dropped when any short unsure segment was.
+        for text, logprob in ((" ok computer", -1.09), (" Press Enter.", -1.07),
+                              (" Open terminal.", -1.2)):
+            t = self.make([_segment(text, logprob)], drop_unsure_short=True)
+            self.assertEqual(self.run_on(t), text.strip())
+
+    def test_confident_phantom_kept(self) -> None:
+        # A clearly spoken "Thank you." is real speech.
+        t = self.make([_segment(" Thank you.", -0.2)], drop_unsure_short=True)
+        self.assertEqual(self.run_on(t), "Thank you.")
+
 
 if __name__ == "__main__":
     unittest.main()
