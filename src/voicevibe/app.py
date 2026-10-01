@@ -20,9 +20,10 @@ from .audio import SegmentRecorder, device_label
 from .config import Config
 from .feedback import Beeper, Tray
 from .hotkey import HotkeyListener, physically_down
-from .inserter import Inserter, focused_window
+from .inserter import Inserter, focused_window, front_process
 from .logs import data_dir
 from .overlay import Overlay
+from .vocab import Vocabulary, echoes_prompt
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class VoiceVibe:
             pre_roll=float(cont["pre_roll"]),
         )
         self.inserter = Inserter(config.output)
+        self.vocab = Vocabulary(config.vocab)
         self.beeper = Beeper(bool(config.feedback.get("sounds", True)))
         self.tray = Tray(bool(config.feedback.get("tray_icon", True)), self.request_stop)
 
@@ -189,7 +191,12 @@ class VoiceVibe:
 
     def _transcribe_and_insert(self, audio: np.ndarray) -> None:
         started = time.perf_counter()
+        prompt = self._decoder_prompt(front_process())
+        self.transcriber.initial_prompt = prompt
         text = self.transcriber.transcribe(audio)
+        if text and echoes_prompt(text, prompt):
+            log.info("Dropped a decoder prompt echo.")
+            text = ""
         elapsed = time.perf_counter() - started
         if not text:
             self.airoot.show_transcript("No speech recognized", "Try again")
@@ -207,6 +214,10 @@ class VoiceVibe:
         self.beeper.done()
 
     # ---------------------------------------------------------------- control
+    def _decoder_prompt(self, process: str = "") -> str | None:
+        existing = str(self.config.model.get("initial_prompt") or "").strip()
+        return " ".join(p for p in (existing, self.vocab.hint(process)) if p) or None
+
     def request_stop(self) -> None:
         self._stop.set()
         self.tray.stop()
@@ -216,7 +227,7 @@ class VoiceVibe:
         from .engines import create as create_transcriber
 
         self.transcriber = create_transcriber(self.config.model)
-        self.transcriber.hotwords = None
+        self.transcriber.hotwords = self.vocab.hotwords_text()
         self.transcriber.warmup(int(self.config.audio["sample_rate"]))
 
         self.overlay.start()

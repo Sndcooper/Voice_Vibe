@@ -50,6 +50,26 @@ def focused_window() -> str:
         return ""
 
 
+def front_process() -> str:
+    """Executable name of the foreground app, for decoder vocabulary hints."""
+    if sys.platform != "win32":
+        return ""
+    try:
+        import ctypes
+        import psutil
+
+        user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.restype = ctypes.c_void_p
+        user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        hwnd = user32.GetForegroundWindow()
+        pid = ctypes.c_ulong()
+        if not hwnd or not user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid)):
+            return ""
+        return psutil.Process(pid.value).name().lower()
+    except Exception:
+        return ""
+
+
 class Inserter:
     def __init__(self, output_cfg: dict[str, Any]) -> None:
         self.cfg = output_cfg

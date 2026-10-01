@@ -99,7 +99,7 @@ log_transcripts = true
 enabled = true
 # Optional prebuilt overlay (see assets/AirootVoiceOverlay.spec). Empty runs
 # assets/airoot_overlay.py with the PySide6 in this environment.
-exe = ""
+exe = "dist/AirootVoiceOverlay.exe"
 # Must match the port in the overlay.
 port = 53873
 # Start it hidden when the app starts, so the first tap shows it instantly.
@@ -119,3 +119,9 @@ opacity = 0.95
 # How long the last sentence stays up beside the orb, in seconds.
 expand_seconds = 4.0
 max_width = 460
+
+# Same decoder vocabulary tuning as Voice_Vibe. App hints are selected for
+# each utterance; silence that only repeats a hint is discarded.
+[vocab]
+hotwords = ["Claude", "Codex", "Kiro", "Gemini", "Notion", "LinkedIn", "GitHub", "terminal"]
+app_prompts = true

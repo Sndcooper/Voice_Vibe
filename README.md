@@ -25,6 +25,12 @@ focus**, so tap the hotkey again before you talk to someone else.
 Basic punctuation and capitals are applied. Set `raw_dictation = true` under
 `[output]` for Whisper's exact words.
 
+The dancing overlay assets, Whisper/Parakeet engines and speech-segmentation
+tuning match `Voice_Vibe`. Vocabulary hotwords and per-app decoder hints are
+configured under `[vocab]`; transcripts that only echo a decoder hint are
+discarded. The desktop launcher prioritizes this project's `src` even when
+using the shared environment installed for the full app.
+
 ## Quick start (Windows, Python 3.10-3.12)
 
 ```powershell
@@ -39,6 +45,11 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1      # add -Cuda for NVIDIA
 `run.bat --console` keeps a window open for debugging. Diagnostics:
 `--list-devices`, `--mic-test`, `--test` (record + transcribe, nothing typed),
 `--key-test` (what a key is called, for rebinding).
+
+`tools/verify_transcription.py` scores the existing local voice benchmark
+recordings and runs the installed Laya model on reference/transcript pairs.
+Laya checks meaning only; the report also records word error rate and controls.
+Results stay in `%LOCALAPPDATA%/VoiceVibe/verification/transcriber-laya.json`.
 
 ## The animations
 

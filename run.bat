@@ -5,6 +5,9 @@ REM Diagnostics (--check, --mic-test, --test, --list-devices, --key-test, --help
 REM --version) print to this window.
 setlocal
 cd /d "%~dp0"
+REM The shared venv also has the full Voice_Vibe editable install. Always load
+REM this app's source first, including in child processes.
+set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
 
 set "PY=%~dp0.venv\Scripts\python.exe"
 set "PYW=%~dp0.venv\Scripts\pythonw.exe"

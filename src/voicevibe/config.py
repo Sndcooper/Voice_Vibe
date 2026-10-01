@@ -65,6 +65,7 @@ DEFAULTS: dict[str, Any] = {
         "tray_icon": True,
         "log_transcripts": True,
     },
+    "vocab": {"hotwords": [], "app_prompts": True, "prompts": {}},
     # The built-in orb: no extra dependencies, used when Airoot is unavailable.
     "overlay": {
         "enabled": False,
@@ -96,6 +97,7 @@ class Config:
     feedback: dict[str, Any] = field(default_factory=dict)
     overlay: dict[str, Any] = field(default_factory=dict)
     airoot: dict[str, Any] = field(default_factory=dict)
+    vocab: dict[str, Any] = field(default_factory=dict)
     path: Path | None = None
     # Memoised auto-detected input device; see the input_device property.
     _device_cache: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -178,5 +180,6 @@ def load_config(explicit: str | Path | None = None) -> Config:
         feedback=merged["feedback"],
         overlay=merged["overlay"],
         airoot=merged["airoot"],
+        vocab=merged["vocab"],
         path=path,
     )
