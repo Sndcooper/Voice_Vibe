@@ -9,4 +9,19 @@ dist/
 /_*.py
 /_*.ps1
 /_*.wav
-CONV.md
+/CONV.md
+
+# Local data, credentials, recordings and optional tool installations.
+/.tools/
+/.cache/
+/room.npy
+*.wav
+*.npy
+.env
+.env.*
+!.env.example
+*.log
+hub.token
+hub.db*
+venvs/
+Repos/

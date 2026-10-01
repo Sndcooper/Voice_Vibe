@@ -5,9 +5,13 @@ setlocal
 set "HERE=%~dp0"
 set "PY=%HERE%..\..\..\venvs\telegram-bot\Scripts\python.exe"
 if not exist "%PY%" (
-  echo venvs\telegram-bot is missing. See src\vvbot\UPSTREAM.md.
+  set "PY=%HERE%..\..\.venv\Scripts\python.exe"
+)
+if not exist "%PY%" (
+  echo Run setup.ps1 -Bot from the repository root. See docs\SETUP.md.
   exit /b 1
 )
+cd /d "%HERE%..\.."
 rem src\ holds both vvbot and the stdlib-only vvhub.protocol / vvhub.secrets it imports.
 set "PYTHONPATH=%HERE%.."
 "%PY%" -m vvbot %*

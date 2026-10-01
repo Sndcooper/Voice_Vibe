@@ -21,6 +21,20 @@ Not kept from upstream: `openai_helper.py`, `usage_tracker.py`,
 extra packages; add them back to `plugins/` + `PLUGIN_MAPPING` if wanted).
 
 ## Setup (user)
+
+For a standalone clone, use the local environment and project extras:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Bot
+.\.venv\Scripts\python.exe -m vvbot set-token
+.\.venv\Scripts\python.exe -m vvbot pair
+.\.venv\Scripts\python.exe -m vvbot run
+```
+
+See [the setup guide](../../docs/SETUP.md) for hub startup and integration
+configuration. The legacy shared-workspace commands below remain supported
+if you create a separate `..\venvs\telegram-bot` environment first.
+
 ```
 cd Voice_Vibe
 uv pip install --python ..\venvs\telegram-bot\Scripts\python.exe -r src\vvbot\requirements.txt

@@ -233,7 +233,8 @@ class PollAllTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = FakeStore()
             summary = run(watchers.poll_all(store, [Boom(), watchers.GitHubWatcher(runner=FakeRunner())],
-                                            state_path=Path(tmp) / "s.json"))
+                                            state_path=Path(tmp) / "s.json",
+                                            now=datetime(2026, 9, 30, 8, 0, tzinfo=timezone.utc)))
             self.assertEqual(summary["boom"], -1)
             self.assertEqual(summary["github"], 4)
 

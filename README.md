@@ -66,6 +66,25 @@ Armed sessions keep the microphone open locally. With the default Whisper wake e
 
 ## Quick start
 
+For a fork of the automation branch, start with [the setup guide](docs/SETUP.md).
+It covers the hub, local model routing, control panel, Telegram, browser tools,
+and building the optional overlay. [CONTRIBUTING.md](CONTRIBUTING.md) explains
+development and tests; [the documentation index](docs/README.md) links the
+architecture, research, status, and historical project logs.
+
+From the repository root, with `uv` installed:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+.\run.bat --check
+.\run.bat
+```
+
+The default setup installs the hub and control panel. Use `-Profile standard`
+for core dictation, or `-Profile assistant` to also install the larger local
+Laya model stack. Add `-Cuda` for NVIDIA transcription or `-Bot` for Telegram.
+The requirements files use `pyproject.toml` as the dependency source.
+
 ### Requirements
 
 | Requirement | Details |
