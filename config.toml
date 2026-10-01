@@ -1,0 +1,121 @@
+# Voice Vibe transcriber configuration. Edit and restart the app.
+# Every key is optional: a missing one falls back to the default.
+
+[hotkeys]
+# Tap once: it starts listening and types each sentence you say, whenever you
+# pause. Tap again: it stops listening.
+# Laptops usually send brightness/volume/media actions from F1-F12 unless Fn is
+# held, so the defaults avoid F-keys. To find what any key or combination is
+# called on your keyboard, run:   run.bat --key-test
+toggle = "ctrl+alt+space"
+# Quit the app (also in the tray menu).
+quit = "ctrl+alt+shift+q"
+
+[continuous]
+# How long a pause ends a sentence and sends it to be transcribed, in seconds.
+# Lower = snappier but risks cutting you off mid-thought.
+silence_duration = 1.5
+# Speech must exceed this multiple of the measured room noise. Raise it in a
+# noisy room, lower it if quiet speech gets missed.
+speech_ratio = 4.0
+# Absolute noise gate, so a silent room never trips the detector on its own.
+min_rms = 0.006
+# Drop segments shorter than this, in seconds. Filters coughs and key clicks.
+min_segment = 0.3
+# Send anyway if you talk this long without pausing, in seconds.
+max_segment = 60.0
+# Audio kept from just before speech starts, so the first syllable survives.
+pre_roll = 0.35
+
+[model]
+# "auto" picks a model this machine can keep up with:
+#   GPU present        -> large-v3-turbo / float16
+#   8+ cores, CPU only -> small.en / int8
+#   4+ cores, CPU only -> base.en / int8
+#   2 cores or <4 GB   -> tiny.en / int8
+# Run `run.bat --check` to see what it would choose here. Or pin one:
+# tiny.en | base.en | small.en | medium.en | large-v3 | large-v3-turbo |
+# distil-small.en | distil-medium.en | distil-large-v3
+name = "auto"
+# whisper | parakeet | auto. "auto" is Whisper on a GPU, and Parakeet on a
+# CPU-only machine if the `parakeet` extra is installed (else Whisper).
+engine = "auto"
+# auto | cuda | cpu
+device = "auto"
+# auto | float16 | int8_float16 | int8
+compute_type = "auto"
+# CPU inference threads. 0 leaves one core free for audio capture.
+cpu_threads = 0
+# ISO-639-1 code, or "auto" to detect every time (slower, less reliable).
+language = "en"
+beam_size = 3
+# Skip silence before decoding. Stops the phantom "Thank you." Whisper invents.
+vad_filter = true
+log_prob_threshold = -1.0
+# Re-decode, warmer, only when a decode loops or is unsure.
+temperature_fallback = true
+# Drop a known Whisper phantom ("Thanks for watching!") when it decodes unsure.
+drop_unsure_short = true
+unsure_logprob = -0.8
+# Bias the decoder toward your vocabulary. Keep it short.
+initial_prompt = ""
+
+[audio]
+sample_rate = 16000
+# Empty follows the Windows default input (Settings > System > Sound > Input),
+# re-checked each time listening starts. A number (--list-devices) pins one.
+input_device = ""
+# Used only when the Windows default is a loopback such as Stereo Mix (which
+# records what the speakers play): the first of these that exists wins.
+input_priority = ["Microphone (Realtek(R) Audio)", "Microphone Array"]
+
+[output]
+# paste = clipboard + Ctrl+V (fast, handles unicode). type = simulate keystrokes.
+mode = "paste"
+# Restore whatever was on the clipboard before pasting.
+restore_clipboard = true
+# How long to wait before restoring it, in seconds. Raise it if a slow app
+# (Electron chat boxes especially) pastes your previous clipboard.
+restore_delay = 0.5
+# Seconds between keystrokes in "type" mode.
+type_delay = 0.004
+add_trailing_space = true
+strip_trailing_period = false
+lowercase = false
+# true = insert exactly what Whisper returned, no capitals or punctuation fixes.
+raw_dictation = false
+polish = true
+
+[feedback]
+# Short beeps when listening starts / stops, and on success or error.
+sounds = true
+tray_icon = true
+log_transcripts = true
+
+# The animated Airoot logo: dances while you speak, gathers into a
+# "Transcribing..." pill while it works. A separate process (assets/airoot_overlay.py)
+# that never takes keyboard focus, so text still lands in your editor.
+[airoot]
+enabled = true
+# Optional prebuilt overlay (see assets/AirootVoiceOverlay.spec). Empty runs
+# assets/airoot_overlay.py with the PySide6 in this environment.
+exe = ""
+# Must match the port in the overlay.
+port = 53873
+# Start it hidden when the app starts, so the first tap shows it instantly.
+preload = true
+# Close it when the app quits -- only if this app started it.
+quit_on_exit = true
+
+# The built-in orb: no extra dependencies. Used automatically when Airoot cannot
+# start; set enabled = true to show it alongside Airoot.
+[overlay]
+enabled = false
+# bottom-right | bottom-left | top-right | top-left
+position = "bottom-right"
+size = 58
+margin = 28
+opacity = 0.95
+# How long the last sentence stays up beside the orb, in seconds.
+expand_seconds = 4.0
+max_width = 460
