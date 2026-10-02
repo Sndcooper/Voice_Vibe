@@ -1,0 +1,110 @@
+[project]
+name = "voicevibe"
+version = "0.1.0"
+description = "Local-first voice dictation with global hotkeys, wake-word sessions, voice commands, and optional text-to-speech."
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "faster-whisper==1.2.1",
+    # 4.6 is the first release with Blackwell (sm_120) kernels. Older builds
+    # fail to load on RTX 50-series and silently fall back to CPU.
+    "ctranslate2>=4.6.0",
+    "sounddevice==0.5.6",
+    "numpy==2.2.6",
+    "pynput==1.8.2",
+    "pyperclip==1.9.0",
+    "pystray==0.19.5",
+    "pillow==11.3.0",
+    "psutil>=5.9",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+ui = ["pywebview==6.2.1", "pywin32==312; sys_platform == 'win32'"]
+bot = ["python-telegram-bot==21.9", "av==18.1.0", "websockets==17.1", "keyring==25.7.0"]
+overlay = ["PySide6>=6.8,<7", "pyinstaller>=6,<7"]
+cuda = [
+    "nvidia-cublas-cu12==12.9.1.4",
+    "nvidia-cudnn-cu12==9.13.1.26",
+]
+# Text-to-speech for the `speak` hotkey. Pulls in torch + transformers (~3 GB).
+# Not needed for spoken replies: those use the Windows SAPI voice, which is
+# already installed and costs no memory.
+tts = [
+    "soprano-tts==0.2.0",
+]
+# Richer screen reading: exact text from the focused control, plus the text
+# recogniser built into Windows. No model weights, a few MB of RAM.
+# Without this, screen answers fall back to the window title and the selection.
+screen = [
+    "comtypes>=1.4.0",
+    # "click X", "show numbers": clickable elements by name.
+    "uiautomation>=2.0.20",
+    # OCR, for "click X" when UI Automation has no such element. winsdk is
+    # archived and never shipped Python 3.12 wheels, so from 3.12 the same
+    # Windows API comes from pywinrt's split packages; screen.py imports
+    # whichever is present.
+    "winsdk>=1.0.0b10; python_version < '3.12'",
+    "winrt-runtime>=2.0; python_version >= '3.12'",
+    "winrt-Windows.Foundation>=2.0; python_version >= '3.12'",
+    "winrt-Windows.Foundation.Collections>=2.0; python_version >= '3.12'",
+    "winrt-Windows.Globalization>=2.0; python_version >= '3.12'",
+    "winrt-Windows.Graphics.Imaging>=2.0; python_version >= '3.12'",
+    "winrt-Windows.Media.Ocr>=2.0; python_version >= '3.12'",
+    "winrt-Windows.Storage.Streams>=2.0; python_version >= '3.12'",
+]
+
+# [wake].engine = "openwakeword": a ~2 ms/frame wake word model instead of a
+# Whisper decode per utterance while waiting. Pulls in onnxruntime.
+# [model].engine = "parakeet" / "auto" on CPU-only machines (WS6): NVIDIA
+# Parakeet TDT 0.6B v2 int8 via onnx-asr (weights CC-BY-4.0).
+parakeet = ["onnx-asr==0.12.0", "onnxruntime==1.30.0"]
+wakeword = [
+    "openwakeword>=0.6.0",
+]
+
+# The automation hub (python -m vvhub serve). A separate process; Voice Vibe
+# itself only needs `websockets` from this list to talk to it.
+hub = [
+    "fastapi==0.142.0",
+    "uvicorn==0.54.0",
+    "websockets==17.1",
+    "keyring==25.7.0",
+    # Terminal skill: shortlists tldr commands before Laya chooses.
+    "rank-bm25==0.2.2",
+]
+# WS4: 08:00/20:00 reports (vvhub.scheduler, skills/reports). Without it the
+# scheduler falls back to a plain asyncio loop; HTML reports need jinja2.
+reports = [
+    "apscheduler==3.11.0",
+    "jinja2==3.1.6",
+]
+# WS3: browser / social / research / notes skills. OpenCLI is Node (venvs\node).
+# Agent-Reach is installed from Repos\Agent-Reach @a19a171 (`uv pip install
+# ..\Repos\Agent-Reach`); PyPI's "agent-reach" is an older, different 0.1.0.
+# Every WS3 skill degrades to a spoken message without these.
+web = [
+    "trafilatura==2.2.0",
+    "notion-client==3.1.0",
+    "mcp==2.2.0",
+]
+# WS2: Laya decides every hub automation (vvhub.laya_engine). Without it the
+# hub routes with keywords and asks before everything. On a CUDA laptop add
+# `--torch-backend=cu128` to `uv pip install`; httpx is FreeLLMAPI's client.
+brain = [
+    "laya==0.3.22",
+    "torch==2.11.0",
+    "transformers==5.17.0",
+    "safetensors==0.8.0",
+    "httpx==0.28.1",
+]
+
+[project.scripts]
+voicevibe = "voicevibe.__main__:main"
+vvhub = "vvhub.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voicevibe", "src/vvhub", "src/vvbot"]

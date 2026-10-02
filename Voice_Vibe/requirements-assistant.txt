@@ -1,0 +1,2 @@
+# Full hub with local Laya routing (downloads torch and model dependencies).
+-e .[screen,hub,reports,web,ui,brain]

@@ -1,0 +1,104 @@
+# THIRD_PARTY.lock — third-party code Voice Vibe / vvhub builds on (TASK.md rule 1).
+# One [[repo]] per upstream. Clones live in ..\Repos\<dir> (shallow, detached at
+# `commit`; not in git). `install` says how it is used on this machine.
+# Anything copied into this repo keeps its license header + upstream commit.
+# Maintained by WS1. Last updated 2026-09-30.
+
+[[repo]]
+name = "laya"
+url = "https://github.com/NandhaKishorM/laya"
+commit = "6d942c92081fbc139e736bbd9ac0023223c29b7f"
+license = "Apache-2.0"
+role = "Local typed-decision model: routing, policy checks, validation (rule 9)"
+install = "PyPI laya==0.3.22 in venvs\\voicevibe (same version as the clone); model convaiinnovations/laya in HF_HOME; INT8 ONNX export in venvs\\models\\laya\\laya.int8.onnx via scripts/export_onnx.py --quantize"
+dir = "laya"
+
+[[repo]]
+name = "freellmapi"
+url = "https://github.com/tashfeenahmed/freellmapi"
+commit = "6def0ff0e81f33685b518c24dcd7e99a80ad89d5"
+license = "MIT"
+role = "Local OpenAI-compatible router over free LLM providers: text + vision only"
+install = "Release v0.13.2 FreeLLMAPI-0.13.2-win.zip (portable) unpacked to venvs\\freellmapi\\app; %APPDATA%\\FreeLLMAPI\\config.json port=3001 (desktop default is 31415), bound to 127.0.0.1"
+dir = "freellmapi"
+
+[[repo]]
+name = "Agent-Reach"
+url = "https://github.com/Panniantong/Agent-Reach"
+commit = "a19a171fa980a0785849596492e0af4db800c82f"
+license = "MIT"
+role = "Research: web/RSS/GitHub/YouTube readers, Instagram read via OpenCLI"
+install = "agent-reach 1.5.0 installed from the clone into venvs\\voicevibe"
+dir = "Agent-Reach"
+
+[[repo]]
+name = "opencli"
+url = "https://github.com/jackwener/opencli"
+commit = "24136945847afbfad266c6c46a8cd335377f9112"
+license = "Apache-2.0"
+role = "Drive the user's logged-in Edge via the Browser Bridge extension; LinkedIn built-ins; plugins"
+install = "npm @jackwener/opencli@1.8.8 -g with prefix venvs\\node (venvs\\node on User PATH); Browser Bridge extension v1.0.24 (release asset opencli-extension-v1.0.24.zip) unpacked in venvs\\node\\opencli-extension\\v1.0.24; skills opencli-adapter-author/-autofix/-browser/-usage copied from the clone with npx skills@1.7.0 into ~\\.claude, ~\\.agents, ~\\.kiro skills"
+dir = "opencli"
+
+[[repo]]
+name = "Windows-MCP"
+url = "https://github.com/CursorTouch/Windows-MCP"
+commit = "30c1472f807eefa44774a2fe23a5b10502a59f23"   # tag v0.8.5 (HEAD 0.8.6 needs Python >= 3.14)
+license = "MIT"
+role = "Desktop state, region snapshot/screenshot, Zen DOM (use_dom) over MCP stdio, on demand"
+install = "PyPI windows-mcp==0.8.5 in venvs\\windows-mcp (CPython 3.13.15, uv-managed); config venvs\\windows-mcp\\config.toml excludes PowerShell, Registry, FileSystem; ANONYMIZED_TELEMETRY=false"
+dir = "Windows-MCP"
+
+[[repo]]
+name = "chatgpt-telegram-bot"
+url = "https://github.com/n3d1117/chatgpt-telegram-bot"
+commit = "df4dcaa26923dee560ef8f9b4f18a682c9b059ad"
+license = "GPL-2.0"
+role = "Fork base for src\\vvbot (WS4): allowlist, voice notes, plugins"
+install = "vendored into src\\vvbot by WS4 (keeps GPL-2.0 + this commit)"
+dir = "chatgpt-telegram-bot"
+
+[[repo]]
+name = "OpenJarvis"
+url = "https://github.com/open-jarvis/OpenJarvis"
+commit = "5e5f5efde4bfcf8a60fe70d1cea12a0185f615ec"
+license = "Apache-2.0"
+role = "Reference: morning_digest report structure, deep_research"
+install = "reference only"
+dir = "OpenJarvis"
+
+[[repo]]
+name = "hermes-agent"
+url = "https://github.com/NousResearch/hermes-agent"
+commit = "94f3f170d45add92ea3aa48063c444a985270acd"
+license = "MIT"
+role = "Reference: messaging-gateway pairing and approval patterns"
+install = "reference only"
+dir = "hermes-agent"
+
+[[repo]]
+name = "munder-difflin"
+url = "https://github.com/chaitanyagiri/munder-difflin"
+commit = "ed06e3e7618b3477a9fb325203e243a53037d5d2"
+license = "MIT (code); assets under LICENSE-ASSETS"
+role = "Office-view renderer for WS5 T20"
+install = "reference / later copy of the renderer (check LICENSE-ASSETS before copying art)"
+dir = "munder-difflin"
+
+[[repo]]
+name = "firecrawl"
+url = "https://github.com/firecrawl/firecrawl"
+commit = "b5d187b19de330028f72bd6e6021a0fcd06ed32c"
+license = "AGPL-3.0"
+role = "Reference only (AGPL + Docker/Redis) — never copy code"
+install = "reference only"
+dir = "firecrawl"
+
+[[repo]]
+name = "tldr"
+url = "https://github.com/tldr-pages/tldr"
+commit = "06abc2808b1def25f798ae5ad868bb8d8da4425b"
+license = "CC BY 4.0"
+role = "Shell command catalog for the terminal skill: Laya picks one of its examples for a spoken request"
+install = "sparse clone (pages/windows, pages/common) in ..\\Repos\\tldr; tools/build_shell_catalog.py writes src/vvhub/data/shell_catalog.json (110 everyday pages, attribution in its source block)"
+dir = "tldr"

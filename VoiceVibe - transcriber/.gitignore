@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Local data and recordings.
+*.wav
+*.npy
+*.log
+.env
+.env.*

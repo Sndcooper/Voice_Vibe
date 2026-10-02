@@ -1,0 +1,3 @@
+# Desktop reading, automation hub, reports, web readers and control panel.
+# Local model routing is a separate, larger optional installation.
+-e .[screen,hub,reports,web,ui]

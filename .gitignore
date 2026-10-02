@@ -1,0 +1,17 @@
+venvs/
+.venv/
+__pycache__/
+*.py[cod]
+node_modules/
+build/
+dist/
+.tools/
+.cache/
+*.npy
+*.wav
+*.log
+.env
+.env.*
+!.env.example
+hub.token
+hub.db*

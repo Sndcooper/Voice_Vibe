@@ -1,0 +1,8 @@
+# Windows-MCP (desktop state, Zen browser DOM) runs in its OWN environment:
+# it needs Python 3.13, the main one is 3.11. vvhub starts it on demand.
+#
+#   uv venv --python 3.13 venvs\windows-mcp
+#   uv pip install --python venvs\windows-mcp\Scripts\python.exe -r requirements-windows-mcp.txt
+#
+# v0.8.5 is the last release that runs on 3.13 (0.8.6+ needs 3.14).
+windows-mcp==0.8.5

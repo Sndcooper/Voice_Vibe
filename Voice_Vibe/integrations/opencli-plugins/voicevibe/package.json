@@ -1,0 +1,7 @@
+{
+  "name": "opencli-plugin-voicevibe",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Voice Vibe commands for OpenCLI: linkedin-post, instagram-notifications, github-notifications"
+}

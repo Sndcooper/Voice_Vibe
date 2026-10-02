@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+# Scratch files at the repo root only. Unanchored, these also matched
+# src/voicevibe/__main__.py and __init__.py, which is how they went missing.
+/_*.py
+/_*.ps1
+/_*.wav
+/CONV.md
+
+# Local data, credentials, recordings and optional tool installations.
+/.tools/
+/.cache/
+/room.npy
+*.wav
+*.npy
+.env
+.env.*
+!.env.example
+*.log
+hub.token
+hub.db*
+venvs/
+Repos/

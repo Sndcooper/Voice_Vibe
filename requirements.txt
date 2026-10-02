@@ -1,0 +1,26 @@
+# Everything the main Python environment needs: Voice Vibe, the vvhub hub,
+# Laya (local decisions), research/notes, reports, control panel, Telegram bot.
+#
+#   uv venv --python 3.11 venvs\voicevibe
+#   uv pip install --python venvs\voicevibe\Scripts\python.exe -r requirements.txt
+#
+# Run it from this folder (the repo root): the paths below are relative to it.
+# Python must be 3.10-3.12 (Voice_Vibe pins <3.13).
+
+# CUDA build of torch for the GPU tier of Laya. On a laptop without an NVIDIA
+# GPU, delete this line: Laya then runs on CPU (or the ONNX INT8 export).
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# Voice Vibe + vvhub with every optional part:
+#   screen   UI Automation + Windows OCR      hub      server, token, keyring
+#   reports  APScheduler + Jinja2             web      trafilatura, Notion, MCP client
+#   ui       control panel (pywebview)        bot      Telegram bot (vvbot)
+#   brain    Laya + torch + transformers      cuda     cuBLAS/cuDNN for Whisper on GPU
+-e ./Voice_Vibe[screen,hub,reports,web,ui,brain,cuda,bot]
+
+# Agent-Reach (research readers), built from the pinned clone in Repos\.
+# Do not use the unrelated old "agent-reach" package from PyPI.
+./Repos/Agent-Reach
+
+# Optional, only for the wake word engine ([wake].engine = "openwakeword"):
+# openwakeword>=0.6.0

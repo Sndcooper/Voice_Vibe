@@ -1,0 +1,81 @@
+{"text": "explain this", "category": "screen", "action": "explain"}
+{"text": "what does this error mean", "category": "screen", "action": "explain"}
+{"text": "explain this code to me", "category": "screen", "action": "explain"}
+{"text": "what am I looking at", "category": "screen", "action": "explain"}
+{"text": "summarize this page", "category": "screen", "action": "summarize"}
+{"text": "give me the gist of this article", "category": "screen", "action": "summarize"}
+{"text": "read this out loud", "category": "screen", "action": "read"}
+{"text": "focus on my cursor", "category": "screen", "action": "focus"}
+{"text": "look at the area around my mouse", "category": "screen", "action": "focus"}
+{"text": "unfocus", "category": "screen", "action": "unfocus"}
+{"text": "research the best budget laptops under seventy thousand rupees", "category": "research"}
+{"text": "find recent articles about solid state batteries", "category": "research"}
+{"text": "look up how the Laya decision model works", "category": "research"}
+{"text": "what's the latest news on the Mars mission", "category": "research"}
+{"text": "compare the Pixel and the iPhone cameras", "category": "research"}
+{"text": "do a deep dive on retrieval augmented generation", "category": "research"}
+{"text": "search online for cheap flights to Goa", "category": "research"}
+{"text": "research competitors for my voice app", "category": "research"}
+{"text": "find papers on quadruped robot locomotion", "category": "research"}
+{"text": "look into which microphones work best for dictation", "category": "research"}
+{"text": "note this", "category": "notes"}
+{"text": "take a note that the demo is on Friday", "category": "notes"}
+{"text": "make notes about the meeting we just had", "category": "notes"}
+{"text": "save this transcript to Notion", "category": "notes"}
+{"text": "add buy milk to my notes", "category": "notes"}
+{"text": "write this down under my robotics page", "category": "notes"}
+{"text": "put this in my Notion", "category": "notes"}
+{"text": "jot down that the build failed on CUDA", "category": "notes"}
+{"text": "remember this idea in my notes", "category": "notes"}
+{"text": "create a Notion page for the trip plan", "category": "notes"}
+{"text": "post this on LinkedIn", "category": "social", "critical": true}
+{"text": "write a LinkedIn post about my new project", "category": "social", "critical": true}
+{"text": "publish this photo to Instagram", "category": "social", "critical": true}
+{"text": "check my Instagram notifications", "category": "social"}
+{"text": "any new comments on my LinkedIn post", "category": "social"}
+{"text": "reply to that comment saying thanks", "category": "social", "critical": true}
+{"text": "send a message to Rahul on LinkedIn", "category": "social", "critical": true}
+{"text": "read my Instagram comments", "category": "social"}
+{"text": "draft an Instagram caption for this", "category": "social"}
+{"text": "how did my last LinkedIn post do", "category": "social"}
+{"text": "create a new GitHub repository called voice tools", "category": "github", "action": "create_repo", "critical": true}
+{"text": "push my changes", "category": "github", "action": "push", "critical": true}
+{"text": "open a pull request for this branch", "category": "github", "action": "create_pr", "critical": true}
+{"text": "list my open pull requests", "category": "github", "action": "list_prs"}
+{"text": "what branch am I on", "category": "github", "action": "status"}
+{"text": "commit everything with message fix the router", "category": "github", "action": "commit"}
+{"text": "make a new branch called experiments", "category": "github", "action": "create_branch"}
+{"text": "show me my GitHub repos", "category": "github", "action": "list_repos"}
+{"text": "git status", "category": "github", "action": "status"}
+{"text": "push this to GitHub", "category": "github", "action": "push", "critical": true}
+{"text": "ask Claude to add unit tests for this file", "category": "code", "action": "prompt"}
+{"text": "tell Codex to refactor the login handler", "category": "code", "action": "prompt"}
+{"text": "fix this", "category": "code", "action": "fix_this"}
+{"text": "in the VS Code terminal ask Claude Code to explain the build error", "category": "code", "action": "prompt"}
+{"text": "ask Kiro to write a function that parses the config", "category": "code", "action": "prompt"}
+{"text": "have Codex review my last commit", "category": "code", "action": "prompt"}
+{"text": "tell Claude to rename this variable everywhere", "category": "code", "action": "prompt"}
+{"text": "fix this bug with Kiro", "category": "code", "action": "fix_this"}
+{"text": "ask the coding agent to make the tests pass", "category": "code", "action": "prompt"}
+{"text": "write a Python script that renames my photos by date", "category": "code", "action": "prompt"}
+{"text": "switch to Spotify", "category": "app", "action": "focus_window"}
+{"text": "bring up the Codex window", "category": "app", "action": "focus_window"}
+{"text": "use the jack microphone", "category": "app", "action": "set_mic"}
+{"text": "which microphones do I have", "category": "app", "action": "list_mics"}
+{"text": "change my mic to the microphone array", "category": "app", "action": "set_mic"}
+{"text": "save this conversation", "category": "app"}
+{"text": "is the hub running", "category": "app"}
+{"text": "go to my VS Code window", "category": "app", "action": "focus_window"}
+{"text": "switch the input device to the headset", "category": "app", "action": "set_mic"}
+{"text": "show me the Claude app", "category": "app", "action": "focus_window"}
+{"text": "hello there", "category": "chitchat"}
+{"text": "thank you", "category": "chitchat"}
+{"text": "how are you doing today", "category": "chitchat"}
+{"text": "tell me a joke", "category": "chitchat"}
+{"text": "good morning", "category": "chitchat"}
+{"text": "what time is it", "category": "chitchat"}
+{"text": "you're awesome", "category": "chitchat"}
+{"text": "what's your name", "category": "chitchat"}
+{"text": "never mind", "category": "chitchat"}
+{"text": "how's it going", "category": "chitchat"}
+{"text": "delete my latest LinkedIn post", "category": "social", "critical": true}

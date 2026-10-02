@@ -1,0 +1,411 @@
+# Voice Vibe configuration. Edit and restart the app.
+
+[hotkeys]
+# Laptops usually send brightness, volume and media actions from F1-F12 unless
+# Fn is held, so the defaults avoid F-keys entirely. To find what any key or
+# combination is called on your keyboard, run:   .\run.bat --key-test
+#
+# Format: modifiers joined with +, e.g. "ctrl+alt+space", "ctrl+shift+d", "f9".
+# Avoid win+ combinations; Windows reserves most of them (win+h is its own
+# voice typing).
+
+# Tap to start recording, tap again to stop -> text is inserted at your cursor.
+dictate = "ctrl+alt+space"
+# Hold-to-talk variant of the same action. Leave empty to disable.
+dictate_hold = ""
+# Hands-free session. Tap once to open the mic and leave it open: every time you
+# pause, that sentence is transcribed and inserted, then it keeps listening.
+# Tap again to close the session. See [continuous] below.
+session = "ctrl+alt+w"
+# Tap to start, tap again to stop -> the text is spoken aloud instead of typed.
+# Needs the optional TTS extra: uv pip install -e ".[tts]"
+speak = "ctrl+alt+shift+space"
+# Hold-to-talk variant of speak. Leave empty to disable.
+speak_hold = ""
+# Tap to quit the app.
+quit = "ctrl+alt+shift+q"
+
+[model]
+# "auto" picks a model this machine can actually keep up with:
+#   GPU present        -> large-v3-turbo / float16
+#   8+ cores, CPU only -> small.en / int8
+#   4+ cores, CPU only -> base.en / int8
+#   2 cores or <4 GB   -> tiny.en / int8
+# Run `run.bat --check` to see what it would choose here.
+#
+# Or pin one: tiny.en | base.en | small.en | medium.en | large-v3 |
+# large-v3-turbo | distil-small.en | distil-medium.en | distil-large-v3
+# The .en builds are smaller *and* more accurate than the multilingual ones
+# for English, which is the right trade when the machine is the constraint.
+name = "auto"
+# auto | cuda | cpu
+device = "auto"
+# auto | float16 | int8_float16 | int8
+compute_type = "auto"
+# CPU inference threads. 0 leaves one core free for audio capture, which stops
+# the microphone dropping blocks mid-sentence on a 2- or 4-core laptop.
+cpu_threads = 0
+# ISO-639-1 code, or "auto" to detect every time (slower, less reliable).
+language = "en"
+# Same model and precision; a small beam considers more word candidates.
+# This may take slightly longer than greedy decoding (beam_size = 1).
+beam_size = 3
+# Silero VAD: skip silence before decoding. Stops the phantom "Thank you." /
+# "I'll see you later." that Whisper invents on silence; measured 2026-09-29
+# to cost no accuracy on quiet speech. Set false for fully raw decoding.
+vad_filter = true
+log_prob_threshold = -1.0
+# Re-decode, warmer, only when a decode loops or is unsure (faster-whisper's
+# compression-ratio and log-prob checks). Clean decodes stay deterministic.
+temperature_fallback = true
+# Drop a known Whisper phantom ("Thank you.", "Thanks for watching!") when it
+# is decoded below unsure_logprob. Other short speech is always kept.
+drop_unsure_short = true
+unsure_logprob = -0.8
+# Bias the decoder toward your vocabulary. Keep it short.
+initial_prompt = ""
+# A second, small model for short command-like utterances: wake checks while
+# waiting, confirmation answers, numbers, "stop", and a first pass over short
+# utterances when [control] is on (if it hears no command prefix, the model
+# above transcribes it again, so dictation keeps full accuracy). "auto" is
+# base.en, skipped when the model above is no bigger; "" turns it off.
+command_model = "auto"
+# Speech engine (WS6, measured 2026-09-30, CONV.md §10):
+#   "whisper"  faster-whisper everywhere
+#   "parakeet" NVIDIA Parakeet TDT 0.6B v2 int8 on CPU (needs the `parakeet`
+#              extra; ~660 MB download on first use; no hotwords)
+#   "auto"     Whisper when a GPU is used; Parakeet on CPU-only machines if
+#              installed (else Whisper). On this laptop's voice at 4 threads:
+#              9.1% WER / 0.25 s vs small.en 13.0% / 1.71 s.
+engine = "auto"
+# Utterances up to this long get the command model's first pass. 0 disables it.
+command_max_seconds = 3.0
+
+[audio]
+sample_rate = 16000
+# Empty follows the Windows default input (Settings > System > Sound > Input),
+# re-checked before every recording, so switching mics there or plugging in a
+# headset takes effect without restarting. A number (--list-devices) pins one.
+input_device = ""
+# Used only when the Windows default is a loopback such as Stereo Mix (which
+# records what the speakers play, so every dictation would be silence): the
+# first of these that exists wins. Names match exactly, or as a substring.
+# "Microphone (Realtek(R) Audio)" is a mic in the jack; otherwise the built-in
+# "Microphone Array". Never list "Stereo Mix".
+input_priority = ["Microphone (Realtek(R) Audio)", "Microphone Array"]
+# Ignore recordings shorter than this (accidental hotkey taps), in seconds.
+min_duration = 0.25
+# Hard cap on a single recording, in seconds.
+max_duration = 300.0
+
+[output]
+# paste = clipboard + Ctrl+V (fast, handles unicode). type = simulate keystrokes.
+mode = "paste"
+# Restore whatever was on the clipboard before pasting.
+restore_clipboard = true
+# How long to wait before restoring it, in seconds. The restore happens on a
+# background thread, so raising this never delays a trailing Enter. Raise it if
+# a slow app (Electron chat boxes especially) pastes your previous clipboard.
+restore_delay = 0.5
+# Seconds between keystrokes in "type" mode.
+type_delay = 0.004
+add_trailing_space = true
+strip_trailing_period = false
+lowercase = false
+# Plain dictation: basic capitals, spacing and sentence punctuation only.
+# Session-only edits and lists are configured under [control].
+raw_dictation = false
+polish = true
+# Apply the [[replacements]] table to dictation (whole words, any case).
+# `python -m voicevibe --suggest-replacements` proposes rows from your history.
+apply_replacements = false
+# Only a whole utterance of "press enter" sends Enter. Sentence mentions stay text.
+voice_commands = true
+# Pause between pasting the text and pressing the command key, in seconds.
+# Raise it if a chat box submits before your text lands.
+command_delay = 0.12
+
+# Hands-free session mode, used by the `session` hotkey (Ctrl+Alt+W).
+[continuous]
+# How long a pause ends a sentence and flushes it, in seconds.
+# Lower = snappier but risks cutting you off mid-thought. 3.0 is very deliberate.
+silence_duration = 1.5
+# Speech must exceed this multiple of the measured room noise. Raise it in a
+# noisy room, lower it if quiet speech gets missed.
+speech_ratio = 4.0
+# Absolute noise gate, so a silent room never trips the detector on its own.
+min_rms = 0.006
+# Drop segments shorter than this, in seconds. Filters coughs and key clicks.
+# Measured on voiced audio only. Keep it low enough that a bare wake word counts.
+min_segment = 0.3
+# Flush anyway if you talk this long without pausing, in seconds.
+max_segment = 60.0
+# Audio retained from just before speech starts, so the first syllable survives.
+pre_roll = 0.35
+# Interim text while you speak (dictation and a woken session), replaced by
+# the real transcript on the pause. Shown on the Airoot overlay (as a
+# "Listening" transcript) and the orb. "auto" = only with a GPU: on a CPU an
+# interim decode competes with the final one. false keeps the logo-only look.
+partials = "auto"
+# Seconds between interim updates.
+partial_interval = 0.8
+
+# Wake word for session mode. With this on, an open session types nothing until
+# it hears one of `phrases`. After a submit command fires it goes back to waiting,
+# so the session can stay open all day.
+[wake]
+enabled = true
+# Any of these wakes it.
+#
+# Choosing one: Whisper uses surrounding context to decide what it heard, so a
+# short uncommon word spoken alone is the least reliable thing you can pick
+# ("arise" comes back as "a rise", "arrives", "Iris"). Two common words are far
+# more robust, and a pairing you would never say by accident avoids false wakes.
+# Verify any candidate with:  run.bat --wake-test --wake "your phrase"
+#
+# Known-good options: "hey computer", "okay computer", "hey jarvis",
+# "computer listen", "start dictation", "wake up".
+phrases = ["hey computer", "okay computer", "ok computer"]
+# Near-miss tolerance, 0 to 1. Absorbs Whisper splitting a word ("a rise") or
+# swapping letters ("arize"). 0 disables. Above ~0.9 is effectively exact;
+# below ~0.7 starts matching unrelated speech.
+fuzzy = 0.82
+# Put the wake phrases in Whisper's initial_prompt so the decoder is primed to
+# emit them verbatim. Cheap and effective; turn off only if it skews dictation.
+bias_prompt = true
+# Abort dictation without submitting anything.
+sleep_phrases = ["never mind", "nevermind", "go to sleep", "cancel that"]
+# Go back to waiting after this many seconds of silence while dictating.
+# Stops a forgotten session from typing out a conversation. 0 disables.
+# Time spent talking never counts as silence.
+active_timeout = 40.0
+# Print what was heard while waiting, so you can spot mishearings and add aliases.
+log_ignored = true
+# What listens for the wake word.
+#   "whisper"       transcribe every utterance while waiting (works with any
+#                   phrase above, but a full decode per utterance all day)
+#   "openwakeword"  a tiny dedicated model scores the audio (~2% of one core);
+#                   Whisper runs only after it fires. Needs:
+#                     uv pip install openwakeword
+#                   Pretrained models: hey_jarvis, alexa, hey_mycroft,
+#                   hey_rhasspy -- there is no "hey computer". For your own
+#                   phrase, train one with openWakeWord and give its .onnx path.
+engine = "whisper"
+model = "hey_jarvis"
+# 0 to 1. Lower wakes more easily and falsely.
+threshold = 0.5
+# After the model fires, the transcript must contain the wake phrase too
+# (the model's phrase is added to `phrases` automatically); otherwise it was a
+# false alarm and the session goes back to waiting.
+confirm_with_whisper = true
+
+# Text-to-speech for the `speak` hotkey, via Soprano (github.com/ekwek1/soprano).
+[speech]
+# auto | cuda | cpu | mps
+device = "auto"
+# auto | transformers | lmdeploy
+backend = "auto"
+# Stream to the speakers as audio is generated. Lower latency.
+streaming = true
+# Higher = more varied delivery. Soprano's default is 0.4.
+temperature = 0.4
+top_p = 0.95
+repetition_penalty = 1.2
+cache_size_mb = 100
+decoder_batch_size = 1
+# Load the model at startup instead of on first use. Costs memory, saves a wait.
+preload = false
+# Directory to keep generated wav files in. Empty = don't save.
+save_dir = ""
+
+[feedback]
+# Short beeps on start / success / error.
+sounds = true
+tray_icon = true
+log_transcripts = true
+
+# The floating status orb: a frameless, click-through circle pinned above every
+# other window. It is not a window you can move or close; it shows state and the
+# last thing that happened, then fades back to a dot.
+[overlay]
+# Off because the Airoot overlay below already shows the same states. Turn it
+# back on if you disable Airoot, or you will have no on-screen indicator.
+enabled = false
+# bottom-right | bottom-left | top-right | top-left
+position = "bottom-right"
+size = 58
+margin = 28
+opacity = 0.95
+# How long a caption stays up before the orb shrinks back, in seconds.
+expand_seconds = 4.0
+max_width = 460
+
+# The app runs in the background with no console, so this is the record of what
+# it heard and did. Files live in %LOCALAPPDATA%\VoiceVibe\.
+[history]
+enabled = true
+# Delete history files older than this. 0 keeps everything.
+# "computer save this conversation" copies the kept days into history\saved\,
+# which is never pruned.
+keep_days = 2
+
+# The automation hub (python -m vvhub serve). "computer <task>" commands that
+# nothing else handles are offered to it; if it is not running, they are typed
+# exactly as today.
+[hub]
+enabled = true
+
+# Replies. There is no language model here: answers are matched and extracted,
+# never generated, so this costs no extra memory and cannot invent an answer.
+[assistant]
+enabled = true
+# "open <app>" launches from the allowlist above.
+launch_apps = true
+# "what's on my screen", "what is this error", "read this", "where am I".
+answer_screen = true
+# Index Start Menu shortcuts at startup so most apps work without [[apps]] rows.
+discover_apps = true
+# How close a spoken name must be to an app name, 0 to 1. Lower matches more
+# loosely and risks opening the wrong thing.
+match_threshold = 0.78
+# Speak confirmations through the Windows voice. This is SAPI, not Soprano:
+# instant, already installed, and no model to load.
+speak_replies = true
+# -10 (slowest) to 10 (fastest).
+voice_rate = 1
+
+# Spoken commands inside a session: start an utterance with a prefix word
+# ("computer, ...") to aim it at the computer instead of the cursor. The prefix
+# must come first; "the computer is slow" is still typed. In a wake-word session
+# it works once woken. Anything prefixed that is not a command is typed as
+# heard, prefix included.
+#
+# Commands (the whole utterance must be one of these):
+#   editing  save, save as <name>, find [<text>], find and replace, select all,
+#            copy, cut, paste, undo, redo, bold, italic, underline, delete line
+#   scroll   scroll up/down/left/right [N], page up/down, go to top/bottom,
+#            keep scrolling [up/down], stop
+#   tabs     new tab, close tab, next/previous tab, tab N, first..eighth tab,
+#            last tab, reopen closed tab, duplicate tab
+#   windows  minimize, maximize, restore, snap left/right,
+#            move to other monitor, show desktop, switch to <app or title>
+#   system   volume up/down [N], louder, quieter, mute, play/pause, next/previous
+#            track, screenshot, clipboard, lock (asks first)
+#   screen   click / double click / right click / hover <name>, next one,
+#            show numbers, show links, click <number>, hide numbers
+#            (needs the screen extra: uv pip install -e ".[screen]")
+# A [[commands]] row whose `say` matches a command replaces the built-in one,
+# e.g. say = "delete line", keys = "ctrl+shift+k" for VS Code.
+[control]
+enabled = true
+# Prefixed edits of the previous session utterance; never plain dictation.
+spoken_edits = true
+# Format enumerations in session dictation.
+format_lists = true
+prefixes = ["computer"]
+# "control": after "hey computer" everything you say is a request ("computer"
+# optional; "type ..." types text, "... press enter" submits), and Enter does
+# not end the session -- 40 s of silence or "never mind" does. "dictation":
+# only the first request after the wake phrase skips the prefix, other speech
+# is typed, and Enter ends the session.
+session_mode = "control"
+# Wheel notches for a plain "scroll down". Each notch is ~3 lines.
+scroll_amount = 5
+# "keep scrolling" stops by itself after this many seconds.
+keep_scrolling_limit = 30.0
+# "show numbers" / "show links" tags vanish after the next command, or after
+# this many seconds.
+badge_seconds = 20.0
+# A command that is not one of the above but exactly names something on screen
+# ("computer Downloads") clicks it. With implicit_ocr, text on screen counts
+# too -- that costs ~2s of OCR before an unrecognised command falls through
+# to dictation, so turn it off if prefixed dictation feels slow.
+implicit_click = true
+implicit_ocr = true
+# A command that mentions any of these -- in what you said, or in a step's
+# label or keys -- is read back and waits for a spoken yes before it runs.
+# Matches inside words, so "send" also covers "sending" and "resend". This cannot
+# be switched off per command: a step marked confirm = false is still asked.
+confirm_words = ["delete", "uninstall", "send", "buy"]
+# Seconds to answer. Silence, or anything but a yes, cancels.
+confirm_timeout = 8.0
+# Consent: the whole answer must be these words ("yes", "yes, confirm").
+yes_words = ["yes", "confirm"]
+# Refusal: any of these anywhere in the answer cancels at once.
+no_words = ["no", "cancel", "stop", "never mind"]
+
+# Per-app commands, used when that app is in front, before everything else.
+# Built in: explorer.exe, zen.exe (from Zen's own shortcut settings),
+# claude.exe, chatgpt.exe. A row here adds phrases to the built-in profile and
+# replaces ones it repeats; builtin = false replaces the profile entirely.
+# {name} in a phrase captures words; | separates alternatives. Steps are
+# keys, type_text, click_named, wait, scroll, first_of, say, ... (actions.py).
+# Tables must come after every [section] key they would otherwise capture, so
+# keep these below [control].
+#
+# [[profiles]]
+# process = "code.exe"
+# [profiles.commands]
+# "delete line" = { keys = "ctrl+shift+k" }
+# "go to file {name}" = [{ keys = "ctrl+p" }, { wait = 0.3 }, { type_text = "{name}" }, { keys = "enter" }]
+
+# The Airoot overlay: only the voice-reactive red logo while recording, then
+# a "Transcribing..." pill that fades away when processing finishes.
+# It is a separate app; Voice Vibe preloads it hidden and shows it the moment
+# recording starts (dictate, speak, or a woken session), then hides it again.
+#
+# It never takes keyboard focus, so dictation still lands in your editor.
+# Costs roughly the memory of a small Qt app while running; set enabled = false
+# on very low-RAM machines -- the built-in orb above shows the same state.
+[airoot]
+enabled = true
+# Show the logo whenever a session's mic is open, also while it waits for
+# "hey computer" (false: only after the wake phrase).
+show_while_armed = true
+# Optional: build from assets/AirootVoiceOverlay.spec (see docs/SETUP.md).
+exe = "dist/AirootVoiceOverlay.exe"
+# Must match the port compiled into the overlay.
+port = 53873
+# Start it hidden when Voice Vibe starts, so the first recording shows it
+# instantly instead of after its few-second startup.
+preload = true
+# Close it when Voice Vibe quits -- only if Voice Vibe was the one that started it.
+quit_on_exit = true
+
+# Words Whisper should expect.
+[vocab]
+# Names and jargon it would otherwise spell by sound. Passed to faster-whisper
+# as hotwords; costs nothing at runtime.
+# The tools you talk to: "run Claude" was heard as "surround the cloud".
+hotwords = ["Claude", "Codex", "Kiro", "Gemini", "Notion", "LinkedIn", "GitHub", "terminal"]
+# Add a short hint in the style of the front app to the decoder prompt: code
+# words in editors and terminals, plain prose in Claude / ChatGPT. Not used
+# while a session waits for its wake word.
+app_prompts = true
+# Per-app hints, by process name; these replace the built-in ones, and ""
+# turns one off.
+# [vocab.prompts]
+# "code.exe" = "Python, FastAPI, pytest, async def, pull request."
+
+# How the screen is read when you ask about it.
+[screen]
+enabled = true
+# Grab the current selection with a clipboard round-trip. Needs nothing extra
+# and is the most accurate source. Your clipboard is always restored.
+use_selection = true
+# Read the focused control directly. Needs the optional extra:
+#   uv pip install -e ".[screen]"
+use_uia = true
+# Fall back to the text recogniser built into Windows. Also needs [screen].
+# No model download and no resident memory: it is the OS engine.
+use_ocr = true
+max_chars = 4000
+# "computer focus on my cursor": the pinned region (pixels) and how long it
+# stays pinned before it lapses on its own ("computer unfocus" ends it now).
+focus_seconds = 180
+region_size = [800, 500]
+# Privacy guard: windows whose text, OCR and crops never leave Voice Vibe.
+# Password managers, banking/payments and private browsing are always
+# blocked; these lists can only add to that. Titles match whole words.
+privacy_deny_processes = []
+privacy_deny_titles = []
